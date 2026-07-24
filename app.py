@@ -11,6 +11,7 @@ from urllib.parse import quote
 from datetime import datetime, timedelta, timezone
 from supabase import create_client
 from dotenv import load_dotenv
+from scraper import get_random_ua, crawl_youtube_for_page, download_video
 
 # --- CẤU HÌNH LOGGING ---
 logging.basicConfig(
@@ -26,32 +27,6 @@ logger = logging.getLogger(__name__)
 # --- CẤU HÌNH & KHỞI TẠO ---
 load_dotenv()
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
-
-USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:122.0) Gecko/20100101 Firefox/122.0',
-    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1',
-    'Mozilla/5.0 (iPad; CPU OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1',
-    'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36',
-    'Mozilla/5.0 (Linux; Android 13; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/121.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/122.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 OPR/105.0.0.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 OPR/105.0.0.0',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Vivaldi/6.5.3206.63',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0'
-]
-
-def get_random_ua():
-    return random.choice(USER_AGENTS)
 
 DEFAULT_USER_AGENT = get_random_ua()
 
@@ -81,17 +56,6 @@ def safe_execute(query, max_retries=3):
             else:
                 logger.error(f"❌ Thất bại sau {max_retries} lần thử.")
                 raise e
-
-def spin(text):
-    """Hàm xử lý Spintax: {A|B|C} -> Chọn ngẫu nhiên A hoặc B hoặc C"""
-    while "{" in text and "}" in text:
-        start = text.rfind("{")
-        end = text.find("}", start)
-        if end == -1: break
-        content = text[start + 1:end]
-        chosen = random.choice(content.split("|"))
-        text = text[:start] + chosen + text[end + 1:]
-    return text
 
 HASHTAG_POOLS = [
     "✨ #review #shopeehaul #muataishopee #xuhuong",
@@ -130,64 +94,103 @@ def clean_title(title):
     return f"{title.capitalize()} {hashtags}"
 
 def process_video_spinning(input_path, page_name="Review Pro"):
-    """Sử dụng ffmpeg để 'phẫu thuật' video: Bỏ sạch nền mờ, ép về Full màn hình 9:16 chuẩn Reels"""
+    """Phân loại 3 loại video và xử lý lách bản quyền thông minh theo đúng yêu cầu"""
     output_path = input_path.replace(".mp4", "_processed.mp4")
     text_file = None
     try:
-        # 1. Phân tích kích thước gốc
+        # 1. Lấy thông số kích thước gốc để phân loại
         cmd_probe = ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'json', input_path]
         probe_res = subprocess.run(cmd_probe, capture_output=True, text=True, timeout=15)
         probe_data = json.loads(probe_res.stdout)
-        width = int(probe_data['streams'][0]['width'])
-        height = int(probe_data['streams'][0]['height'])
-        
-        logger.info(f"   📊 File gốc: {width}x{height}")
+        w = int(probe_data['streams'][0]['width'])
+        h = int(probe_data['streams'][0]['height'])
 
-        # 2. Quét tìm lõi nội dung thực tế (Bỏ qua các lớp nền mờ/rác biên)
-        # Tăng limit lên 90 để lọc sạch mọi loại padding
-        logger.info("   🔍 Đang quét tìm lõi video (Lọc sạch nền mờ/rác)...")
-        vf_detect = "edgedetect=low=0.1:high=0.2,cropdetect=90:16:0"
-        cmd_detect = ['ffmpeg', '-i', input_path, '-t', '15', '-vf', vf_detect, '-f', 'null', '-']
-        detect_res = subprocess.run(cmd_detect, capture_output=True, text=True, timeout=45)
-        crops = re.findall(r'crop=(\d+):(\d+):(\d+):(\d+)', detect_res.stderr)
-        
-        d_w, d_h, d_x, d_y = width, height, 0, 0
-        if crops:
-            d_w, d_h, d_x, d_y = map(int, crops[-1])
-            logger.info(f"   📏 Lõi nội dung: {d_w}x{d_h} tại ({d_x},{d_y})")
-
-        # 3. Thông số lách bản quyền
-        speed = random.uniform(1.03, 1.05)
+        # 2. Thông số lách bản quyền chung
+        speed = random.uniform(1.03, 1.06)
         pts = 1 / speed
         text_file = f"logo_{random.getrandbits(32)}.txt"
         with open(text_file, "w", encoding="utf-8") as f: f.write(page_name)
+        
+        # Ngẫu nhiên hóa màu sắc và vị trí logo (chỉ 2 góc trên)
+        br = random.uniform(0.02, 0.05)
+        sa = random.uniform(1.1, 1.3)
+        co = random.uniform(1.03, 1.08)
+        logo_x = random.choice(["35", "w-tw-35"]) # Trái hoặc Phải
+        logo_y = "35" # Luôn ở phía trên
+        
         font_cfg = "font='Arial'" if os.name == 'nt' else "fontfile='/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf'"
-        logo_filter = f"drawtext={font_cfg}:textfile='{text_file}':x=w-tw-35:y=35:fontsize=32:fontcolor=white:borderw=2.5:bordercolor=black@0.9"
+        logo_filter = f"drawtext={font_cfg}:textfile='{text_file}':x={logo_x}:y={logo_y}:fontsize=32:fontcolor=white:borderw=2.5:bordercolor=black@0.8"
+        
+        # Bộ lọc lách bản quyền (Spinning) nâng cao
+        zoom = random.uniform(1.02, 1.04)
+        # Thêm vignette (mờ góc) và ngẫu nhiên hóa eq
+        spin_filters = f"scale=iw*{zoom}:-2,crop=iw:ih,noise=alls=1:allf=t,eq=brightness={br}:saturation={sa}:contrast={co},unsharp=5:5:1.0:5:5:0.0,vignette=PI/20,{logo_filter},setpts={pts}*PTS"
 
-        # 4. THỰC THI PHẪU THUẬT: ÉP BUỘC FULL MÀN HÌNH 9:16
-        # Bước 1: Cắt lấy lõi đã quét được (loại bỏ nền mờ gốc)
-        # Bước 2: Phóng lớn (scale) để lấp đầy 1080x1920 (không để lại bất kỳ khoảng trống nào)
-        # Bước 3: Crop lại đúng 1080x1920 để loại bỏ phần thừa nếu lõi là khung ngang
-        logger.info("   🎯 Chế độ: ÉP BUỘC FULL MÀN HÌNH (Bỏ sạch nền mờ)")
-        vf_filters = (
-            f"crop={d_w}:{d_h}:{d_x}:{d_y},"
-            f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
-            f"noise=alls=1:allf=t,eq=brightness=0.03:saturation=1.15:contrast=1.05,"
-            f"unsharp=5:5:1.0:5:5:0.0,{logo_filter},setpts={pts}*PTS"
-        )
+        # 3. PHÂN LOẠI VÀ CHỌN BỘ LỌC TỐI ƯU
+        if h > w:
+            # --- LOẠI 1: VIDEO DỌC CHUẨN ---
+            logger.info(f"   📱 Loại 1 (Dọc chuẩn): {w}x{h}. Chuẩn hóa 9:16 (720p) và lách bản quyền.")
+            vf = f"scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black,{spin_filters}"
+            filter_complex = f"[0:v]{vf}[v]"
+        else:
+            # Kiểm tra xem là Ngang Full (Loại 2) hay Dọc-trong-Ngang (Loại 3)
+            logger.info(f"   🖥️ Video Ngang: {w}x{h}. Đang phân tích nội dung...")
+            # Sử dụng edgedetect để bỏ qua vùng nền mờ/tĩnh, chỉ lấy vùng nội dung sắc nét
+            vf_detect = "edgedetect=low=0.1:high=0.2,cropdetect=40:16:0"
+            cmd_detect = ['ffmpeg', '-ss', '00:00:15', '-i', input_path, '-t', '3', '-vf', vf_detect, '-f', 'null', '-']
+            detect_res = subprocess.run(cmd_detect, capture_output=True, text=True, timeout=45)
+            # Sử dụng regex linh hoạt để bắt cả số âm (một số bản ffmpeg trả về h âm khi detect từ dưới lên)
+            crops = re.findall(r'crop=(-?\d+):(-?\d+):(-?\d+):(-?\d+)', detect_res.stderr)
+            
+            is_type_3 = False
+            if crops:
+                last_crop = crops[-1]
+                d_w = abs(int(last_crop[0]))
+                d_h = abs(int(last_crop[1]))
+                logger.info(f"      🔍 Vùng nội dung phát hiện: {d_w}x{d_h} (Khung gốc: {w}x{h})")
+                
+                # CHỈ phân loại là Loại 3 nếu vùng nội dung có tỉ lệ DỌC (H > W) 
+                # và chiếm ít nhất 70% chiều cao khung hình (tránh bắt nhầm thanh taskbar/sub)
+                if d_h > d_w and d_h > h * 0.7:
+                    is_type_3 = True
+                    logger.info("      🎯 Xác nhận: Video Dọc trong khung Ngang.")
+                else:
+                    logger.info("      📺 Xác nhận: Video Ngang chuẩn (hoặc không rõ ràng) -> Chuyển về Loại 2.")
 
-        # 5. Thực thi FFmpeg
-        cmd = ['ffmpeg', '-y', '-i', input_path, '-vf', vf_filters, '-af', f"atempo={speed}",
-               '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '26', '-pix_fmt', 'yuv420p',
+            if is_type_3:
+                # --- LOẠI 3: DỌC TRONG KHUNG NGANG (HOẶC VIDEO CÓ LỀ) ---
+                logger.info("   🎯 Loại 3 (Có lề/Dọc trong ngang): Giữ nguyên khung hình, chỉ lách bản quyền.")
+                filter_complex = f"[0:v]scale='trunc(iw/2)*2':'trunc(ih/2)*2',{spin_filters}[v]"
+            else:
+                # --- LOẠI 2: NGANG FULL MÀN HÌNH ---
+                logger.info("   📺 Loại 2 (Ngang Full): Thêm nền mờ để biến thành khung dọc 9:16 (720p Optimized).")
+                filter_complex = (
+                    f"[0:v]scale=405:720:force_original_aspect_ratio=increase,crop=405:720,gblur=sigma=20,scale=720:1280[bg];"
+                    f"[0:v]scale=720:1280:force_original_aspect_ratio=decrease[fg];"
+                    f"[bg][fg]overlay=(W-w)/2:(H-h)/2,{spin_filters}[v]"
+                )
+
+        # 4. Thực thi FFmpeg với các flag tối ưu: FPS 30, xóa metadata, faststart
+        cmd = ['ffmpeg', '-y', '-i', input_path, '-filter_complex', filter_complex, '-map', '[v]', '-map', '0:a?',
+               '-af', f"atempo={speed}", '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+               '-pix_fmt', 'yuv420p', '-r', '30', '-map_metadata', '-1', '-movflags', '+faststart',
                '-c:a', 'aac', '-b:a', '128k', output_path]
-        subprocess.run(cmd, capture_output=True, check=True, timeout=2000)
+        
+        logger.info(f"   🎬 Đang xử lý video: {os.path.basename(input_path)}")
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=2000)
+        
+        if res.returncode != 0:
+            logger.error(f"❌ FFmpeg thất bại (Exit {res.returncode}):\n{res.stderr}")
+            return False
 
         if os.path.exists(text_file): os.remove(text_file)
         if os.path.exists(output_path):
             os.remove(input_path); os.rename(output_path, input_path)
             return True
+    except subprocess.TimeoutExpired:
+        logger.error(f"❌ FFmpeg quá thời gian xử lý (Timeout 2000s) cho video: {input_path}")
     except Exception as e:
-        logger.error(f"⚠️ Lỗi xử lý video: {e}")
+        logger.error(f"⚠️ Lỗi xử lý video {input_path}: {e}")
         if text_file and os.path.exists(text_file): os.remove(text_file)
     return False
 
@@ -225,388 +228,247 @@ def save_pending_video(video_id, page_id, tieu_de, link_aff):
     except Exception as e:
         logger.error(f"⚠️ Lỗi lưu video {video_id}: {e}")
 
-def update_posted_status(video_id, page_id, video_fb_id):
-    """Cập nhật trạng thái sau khi đã đăng bài thành công"""
+def update_scheduled_status(video_id, page_id, video_fb_id, scheduled_time_iso):
+    """Cập nhật trạng thái sau khi đã đặt lịch đăng thành công"""
     try:
         data = {
-            "trang_thai": "posted",
+            "trang_thai": "scheduled",
             "video_fb_id": video_fb_id,
-            "thoi_gian_dang": datetime.now(timezone.utc).isoformat()
+            "thoi_gian_dang": scheduled_time_iso
         }
         safe_execute(supabase.table("lich_su_video").update(data)\
             .eq("id_video", str(video_id))\
             .eq("id_page", str(page_id)))
     except Exception as e:
-        logger.error(f"⚠️ Lỗi cập nhật status cho video {video_id}: {e}")
+        logger.error(f"⚠️ Lỗi cập nhật status hẹn giờ cho video {video_id}: {e}")
 
-# --- LOGIC AFFILIATE ---
-def tao_link_affiliate_moi(url_goc, ma_affiliate, session):
-    """Chuyển đổi link Shopee sang link Affiliate Redirection (an_redir) chuẩn và kiểm tra link sống"""
-    try:
-        # 1. Delay ngẫu nhiên: Tránh việc gửi yêu cầu quá đều đặn như máy
-        time.sleep(random.uniform(3.0, 6.0))
-        
-        # 2. Xoay User-Agent: Mỗi lần check dùng một trình duyệt khác nhau để tránh bị nhận diện bot
-        headers = {'User-Agent': get_random_ua()}
-        
-        res = session.get(url_goc, headers=headers, allow_redirects=True, timeout=15)
-        
-        # 3. Kiểm tra mã trạng thái HTTP (Nếu bị 403/429 là đã bị Shopee soi)
-        if res.status_code == 429:
-            logger.error("   ⛔ Shopee phát hiện Bot (429)! Đang nghỉ 30s...")
-            time.sleep(30)
-            return None
-        
-        if res.status_code != 200:
-            logger.warning(f"   ❌ Link không truy cập được (HTTP {res.status_code}): {url_goc}")
-            return None
-            
-        final_url = res.url
+def get_random_cta():
+    """Tạo câu kêu gọi hành động ngẫu nhiên để tránh bị Facebook quét spam"""
+    prefixes = ["👇", "📍", "🔗", "✨", "🔥", "👉", "✅"]
+    verbs = ["Xem", "Lấy", "Check ngay", "Mua tại", "Sắm ngay", "Link", "Món này"]
+    objects = ["link sản phẩm", "món này", "link mua hàng", "em nó", "đồ", "món mình review"]
+    locations = ["ở dưới bình luận", "trong phần comment", "dưới cmt", "tại bình luận", "phía dưới nhé"]
+    suffixes = ["nhé", "nha", "nhen", "ạ", "cả nhà", "nè", "nha quý vị"]
 
-        # 4. Kiểm tra nếu bị redirect về trang chủ (sản phẩm đã chết)
-        if final_url.split('?')[0].strip('/') == "https://shopee.vn":
-            logger.warning(f"   ❌ Link đã chết hoặc hết hạn (Bị redirect về trang chủ): {url_goc}")
-            return None
+    p = random.choice(prefixes)
+    v = random.choice(verbs)
+    o = random.choice(objects)
+    l = random.choice(locations)
+    s = random.choice(suffixes)
 
-        # 3. Xử lý link MyCollection (nếu có)
-        if "mycollection.shop" in final_url:
-            return final_url
-
-        # 4. Tìm ID sản phẩm để xác nhận đây là link sản phẩm hợp lệ
-        match = (re.search(r'i\.(\d+)\.(\d+)', final_url) or 
-                 re.search(r'product/(\d+)/(\d+)', final_url) or 
-                 re.search(r'shopee\.vn/[^/]+/(\d+)/(\d+)', final_url))
-        
-        if match:
-            s_id, i_id = match.groups()
-            base_url = f"https://shopee.vn/product/{s_id}/{i_id}"
-            encoded_url = quote(base_url)
-            # Trả về link affiliate
-            return f"https://s.shopee.vn/an_redir?origin_link={encoded_url}&affiliate_id={ma_affiliate}&sub_id=fb_reels"
-        else:
-            logger.warning(f"   ❌ Không tìm thấy ID sản phẩm (Link không hợp lệ): {final_url}")
-            return None
-    except Exception as e:
-        logger.error(f"   ⚠️ Lỗi khi kiểm tra link {url_goc}: {e}")
-    return None
-
-# --- LOGIC CÀO YOUTUBE ---
-def crawl_youtube_for_page(config, ma_aff, ua_string, session):
-    """Cào video mới nhất từ YouTube với cơ chế tự động nhảy trang (Pagination)"""
-    target_page_id = config['id_page_dich']
-    nguon_raw = config.get('link_nguon', '').strip()
-    if not nguon_raw: return False
-    
-    keywords = [k.strip() for k in nguon_raw.split(',')]
-    selected = random.choice(keywords)
-    
-    shopee_regex = r'(https?://(?:shope\.ee|s\.shopee\.vn|shopee\.vn|vn\.shp\.ee|affiliate\.shopee\.vn|mycollection\.shop)/[a-zA-Z0-9.\-_]+)'
-    found_count = 0
-    max_pages = 10 # Tối đa nhảy 10 trang (mỗi trang 20 video) -> Tổng 200 video
-    page_size = 20
-
-    import yt_dlp
-    
-    for page in range(max_pages):
-        start_idx = (page * page_size) + 1
-        end_idx = start_idx + page_size - 1
-        
-        logger.info(f"📡 Trang {page+1}: Quét video từ {start_idx} đến {end_idx} cho {selected}...")
-        
-        search_query = selected if "youtube.com" in selected else f"ytsearch{end_idx}:{selected} #shorts"
-        
-        ydl_opts = {
-            'extract_flat': 'in_playlist',
-            'playliststart': start_idx,
-            'playlistend': end_idx,
-            'quiet': True,
-            'no_warnings': True,
-            'user_agent': ua_string,
-            'getcomments': True,
-            'max_comments': 15,
-            'sleep_interval': 3,
-            'max_sleep_interval': 8,
-            'match_filter': lambda info, *, incomplete: 'Video too long' if info.get('duration') and info.get('duration') > 600 else None,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'ios', 'web'],
-                }
-            }
-        }
-
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                search_results = ydl.extract_info(search_query, download=False)
-                entries = search_results.get('entries', [])
-                
-                if not entries:
-                    logger.warning("   ⚠️ Không còn video nào để quét.")
-                    break
-
-                new_videos_in_page = 0
-                for entry in entries:
-                    if not entry: continue
-                    
-                    v_id = entry['id']
-                    if check_video_exists(v_id, target_page_id): 
-                        continue
-
-                    new_videos_in_page += 1
-                    try:
-                        video_info = ydl.extract_info(f"https://www.youtube.com/watch?v={v_id}", download=False)
-                        v_desc = video_info.get('description') or ''
-                        v_comments = video_info.get('comments') or []
-                        
-                        comment_text = " ".join([c.get('text', '') for c in v_comments if c.get('text')])
-                        combined_content = v_desc + " " + comment_text
-                        raw_links = re.findall(shopee_regex, combined_content)
-                        
-                        if raw_links:
-                            unique_links = []
-                            for l in raw_links:
-                                if l not in unique_links: unique_links.append(l)
-
-                            aff_list = []
-                            for l in unique_links[:5]:
-                                aff_link = tao_link_affiliate_moi(l, ma_aff, session)
-                                if aff_link: aff_list.append(aff_link)
-                            
-                            if not aff_list: continue
-
-                            all_links_str = "\n".join(aff_list)
-                            cleaned_tieu_de = clean_title(video_info.get('title', ''))
-                            save_pending_video(v_id, target_page_id, cleaned_tieu_de, all_links_str)
-                            
-                            found_count += 1
-                            logger.info(f"   ✅ Đã nạp mới: {v_id}")
-                            
-                            if found_count >= 10: return True
-                    except Exception as e:
-                        logger.warning(f"   ⚠️ Lỗi video {v_id}: {e}")
-                        continue
-
-                if new_videos_in_page == 0:
-                    wait_page = random.uniform(5, 10)
-                    logger.info(f"   ⏭️ Trang {page+1} toàn video cũ. Nghỉ {wait_page:.1f}s trước khi sang trang {page+2}...")
-                    time.sleep(wait_page)
-                    
-        except Exception as e:
-            logger.error(f"⚠️ Lỗi cào trang {page+1}: {e}")
-            break
-
-    return found_count > 0
-
-# --- TẢI & ĐĂNG VIDEO ---
-def download_video(video_id, ua_string):
-    """Tải video chất lượng tốt nhất dùng yt-dlp với cơ chế retry và giả lập client"""
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    path = f"temp_video_{video_id}.mp4"
-    
-    # Danh sách các tổ hợp client để thử nếu gặp lỗi bot
-    client_combos = [
-        ['android', 'web'],
-        ['ios', 'mweb'],
-        ['tv', 'web']
+    patterns = [
+        f"{p} {v} {o} {l} {s}!",
+        f"{p} {v} {o} {l}",
+        f"{v} {o} {l} {p}",
+        f"{o} {l} {s} {p}"
     ]
-    
-    import yt_dlp
-    for i, clients in enumerate(client_combos):
-        ydl_opts = {
-            'format': 'best[ext=mp4]/best',
-            'outtmpl': path,
-            'quiet': True,
-            'user_agent': get_random_ua(), # Xoay UA mỗi lần thử
-            'nocheckcertificate': True,
-            'retry_sleep': 20,
-            'n_retries': 5,
-            'fragment_retries': 10,
-            'concurrent_fragment_downloads': 1,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': clients,
-                }
-            }
-        }
-        
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
-                if os.path.exists(path):
-                    return path
-        except Exception as e:
-            error_msg = str(e)
-            if "Sign in to confirm you're not a bot" in error_msg:
-                logger.warning(f"⚠️ YouTube chặn bot (Lần {i+1}). Đang thử đổi client...")
-                time.sleep(random.uniform(5, 10))
-            else:
-                logger.error(f"❌ Lỗi tải video {video_id}: {e}")
-                break
-    return None
+    return random.choice(patterns)
 
-def post_to_facebook(video_path, title, l_aff_str, page_token, session):
-    """Đăng video lên Facebook Reels sử dụng Direct Upload (tải lên 1 lần duy nhất)"""
+def post_to_facebook_scheduled(video_path, title, page_token, session, scheduled_time):
+    """Tải video lên Facebook ở chế độ Hẹn giờ (Scheduled)"""
     url = "https://graph-video.facebook.com/v21.0/me/videos"
-    caption = f"{title}\n\n👇 Xem link mua sản phẩm ở phần bình luận nhé!"
+    # Caption ngắn gọn, kêu gọi xem bình luận (đã đa dạng hóa)
+    caption = f"{title}\n\n{get_random_cta()}"
+    
+    timestamp = int(scheduled_time.timestamp())
 
     try:
-        logger.info(f"   📤 Đang tải video lên Facebook (Direct Upload)...")
+        logger.info(f"   📤 Đang tải video lên Facebook (Hẹn giờ: {scheduled_time.strftime('%H:%M %d/%m')})...")
         with open(video_path, 'rb') as f:
             files = {'source': f}
             data = {
                 'description': caption,
-                'access_token': page_token
+                'access_token': page_token,
+                'published': 'false',
+                'scheduled_publish_time': timestamp
             }
-            # Sử dụng timeout lớn vì file có thể nặng
             response = session.post(url, data=data, files=files, timeout=600)
-            res = response.json()
+            
+            if not response.text: return None
+            try:
+                res = response.json()
+            except: return None
 
         if 'id' in res:
             v_fb_id = res['id']
-            logger.info(f"✅ Đã tải video lên FB thành công (ID: {v_fb_id})")
-            
-            # 4. Nghỉ một chút để FB xử lý video rồi đăng bình luận
-            # Tôi để 45-60s để đảm bảo video kịp "live" trên server FB, tránh lỗi comment khi video chưa sẵn sàng.
-            wait_time = random.uniform(45, 60)
-            logger.info(f"⏳ Đợi {wait_time:.1f}s để FB xử lý video rồi đăng bình luận...")
-            time.sleep(wait_time)
-            
-            # 5. Đăng bình luận với cơ chế retry
-            links = l_aff_str.split('\n')
-            msg_header = spin("{✨|🔥|✅|🎯|💎} {Link mua|Sản phẩm|Món này|Link các món} {ở đây|tại đây} {nha|nhé cả nhà|nè}:\n\n")
-            msg_body = "\n".join([f"{spin('{🔗|📍|👉|🏷️|📌}')} Món {i+1}: {l}" for i, l in enumerate(links)])
-            msg_footer = spin("\n\n{🛍️|🛒|🎁|🎀|✨} {Ghé|Vào} shop {xem|tham khảo} thêm {nhiều mẫu|các món|đồ} {xinh|hot|đẹp|xịn} {nha|nhé|nè}! {💖|🌟|🔥|🌈}")
-            
-            final_msg = msg_header + msg_body + msg_footer
-            
-            comment_success = False
-            for attempt in range(3):
-                c_res = session.post(f"https://graph.facebook.com/v21.0/{v_fb_id}/comments",
-                                     data={'message': final_msg, 'access_token': page_token})
-                if c_res.status_code == 200:
-                    logger.info(f"💬 Đã đăng bình luận thành công (Lần {attempt+1}).")
-                    comment_success = True
-                    break
-                else:
-                    logger.warning(f"⚠️ Thử lại đăng bình luận ({attempt+1}/3)... Lỗi: {c_res.text}")
-                    time.sleep(15) # Đợi 15s trước khi thử lại
-            
-            if not comment_success:
-                logger.error(f"❌ Thất bại hoàn toàn khi đăng bình luận cho video {v_fb_id}")
-            
+            logger.info(f"✅ Đã tải và đặt lịch thành công (ID: {v_fb_id})")
             return v_fb_id
         else:
-            logger.error(f"❌ Lỗi tải video lên FB: {res}")
+            logger.error(f"❌ Lỗi Meta API: {res}")
     except Exception as e:
-        logger.error(f"⚠️ Lỗi nghiêm trọng khi đăng Facebook: {e}")
+        logger.error(f"⚠️ Lỗi nghiêm trọng khi đặt lịch: {e}")
     return None
+
+def get_next_schedule_time(page_id, page_index):
+    """Tính toán thời gian đăng bài: 3 bài/ngày (7h, 13h, 19h) và so le 10p giữa các page"""
+    try:
+        # 1. Lấy bài gần nhất
+        res = safe_execute(supabase.table("lich_su_video")
+                           .select("thoi_gian_dang")
+                           .eq("id_page", str(page_id))
+                           .in_("trang_thai", ["posted", "scheduled"])
+                           .order("thoi_gian_dang", desc=True)
+                           .limit(1))
+        
+        now = datetime.now(timezone.utc)
+        slots = [0, 6, 12]  # Giờ UTC tương ứng với 7h, 13h, 19h Việt Nam (UTC+7)
+        offset_minutes = page_index * 10  # So le 10 phút mỗi page
+        
+        if res.data and res.data[0]['thoi_gian_dang']:
+            last_time = datetime.fromisoformat(res.data[0]['thoi_gian_dang'].replace('Z', '+00:00'))
+            start_search = last_time + timedelta(minutes=30) # Tìm khung giờ tiếp theo sau bài cuối ít nhất 30p
+        else:
+            start_search = now + timedelta(minutes=15)
+
+        # 2. Tìm slot thời gian phù hợp tiếp theo
+        current_check = start_search
+        for _ in range(100): # Tìm trong vòng 100 slot tiếp theo
+            for hour in slots:
+                # Tạo thời điểm tiềm năng: Ngày hiện tại/kế tiếp + Hour + Offset
+                potential_time = current_check.replace(hour=hour, minute=0, second=0, microsecond=0)
+                potential_time += timedelta(minutes=offset_minutes)
+                
+                if potential_time > start_search:
+                    # Đảm bảo không đặt lịch quá gần hiện tại (Meta yêu cầu ít nhất 15-20p)
+                    if potential_time < now + timedelta(minutes=15):
+                        continue
+                    return potential_time
+            
+            # Nếu không tìm thấy trong ngày này, nhảy sang ngày mai
+            current_check += timedelta(days=1)
+            current_check = current_check.replace(hour=0, minute=0)
+            
+        return now + timedelta(hours=2) # Fallback
+    except Exception as e:
+        logger.error(f"⚠️ Lỗi tính thời gian đăng: {e}")
+        return datetime.now(timezone.utc) + timedelta(hours=1)
+
+def get_scheduled_info(page_id):
+    """Kiểm tra xem page đã được đặt lịch đến bao nhiêu ngày tới (Dựa trên 3 bài/ngày)"""
+    try:
+        res = safe_execute(supabase.table("lich_su_video")
+                           .select("thoi_gian_dang")
+                           .eq("id_page", str(page_id))
+                           .in_("trang_thai", ["scheduled", "posted"])
+                           .order("thoi_gian_dang", desc=True)
+                           .limit(1))
+        
+        now = datetime.now(timezone.utc)
+        if not res.data or not res.data[0]['thoi_gian_dang']:
+            return 0, 60  # 20 ngày * 3 bài = 60
+            
+        last_time = datetime.fromisoformat(res.data[0]['thoi_gian_dang'].replace('Z', '+00:00'))
+        if last_time < now: return 0, 60
+            
+        delta = last_time - now
+        days_covered = delta.days
+        total_needed = max(0, (20 - days_covered) * 3)
+        
+        return days_covered, total_needed
+    except Exception as e:
+        logger.error(f"⚠️ Lỗi tính toán lịch: {e}")
+        return 0, 0
 
 # --- LUỒNG CHÍNH ---
 def main():
     logger.info(f"--- BOT BẮT ĐẦU CHẠY: {datetime.now().strftime('%H:%M:%S')} ---")
     cleanup_temp_files()
     ma_aff, ua = get_config_from_db()
-    
+
     with requests.Session() as shared_session:
         # Lấy danh sách Page cấu hình
         pages = safe_execute(supabase.table("cau_hinh_page").select("*").order("id")).data
 
-        # BƯỚC 1: KIỂM TRA KHO (Nạp thêm video nếu thiếu)
-        logger.info("🧐 Đang kiểm tra kho video của các Page...")
-        crawls_done = 0
+        # BƯỚC 1: KIỂM TRA KHO VÀ CÀO THÊM
+        logger.info("🧐 Đang kiểm tra trạng thái lịch đăng của các Page...")
         for config in pages:
-            # Giới hạn chỉ cào tối đa cho 2 Page mỗi phiên để tránh YouTube soi
-            if crawls_done >= 2:
-                break
-                
             target_id = config['id_page_dich']
-            # Kiểm tra xem còn video pending không
-            res = safe_execute(supabase.table("lich_su_video")
+            ten_p = config.get('ten_page')
+            
+            days_covered, needed_to_full = get_scheduled_info(target_id)
+            
+            # Kiểm tra xem trong kho pending có bao nhiêu bài
+            res_pending = safe_execute(supabase.table("lich_su_video")
                                .select("id", count="exact")
                                .eq("id_page", str(target_id))
-                               .eq("trang_thai", "pending")
-                               .limit(1))
-            
-            pending_count = res.count if res.count is not None else 0
-            
-            if pending_count == 0:
-                logger.info(f"   ℹ️ Page {config.get('ten_page')} hết video. Đang đi cào nạp kho...")
-                if crawl_youtube_for_page(config, ma_aff, ua, shared_session):
-                    crawls_done += 1
+                               .eq("trang_thai", "pending"))
+            pending_count = res_pending.count if res_pending.count is not None else 0
+
+            logger.info(f"📊 Page [{ten_p}]: Đã có lịch {days_covered} ngày. Kho pending: {pending_count} video.")
+
+            # Nếu tổng (đã đặt lịch + pending) < 20 ngày (60 bài) -> Cào thêm đúng số lượng còn thiếu
+            total_current = (days_covered * 3 + pending_count)
+            if total_current < 60:
+                needed_now = 60 - total_current
+                logger.info(f"   🚀 Thiếu hụt nội dung! Cần thêm {needed_now} video cho {ten_p}...")
+                crawl_youtube_for_page(config, ma_aff, ua, shared_session, check_video_exists, save_pending_video, clean_title, target_goal=needed_now)
+                # Nghỉ một chút giữa các Page để tránh bị YouTube/Shopee soi IP
+                time.sleep(random.uniform(60, 120))
             else:
-                logger.info(f"   ✅ Page {config.get('ten_page')} vẫn còn {pending_count} video chờ.")
+                logger.info(f"   ✅ Page {ten_p} đã đủ nội dung dự trữ.")
 
-        # BƯỚC 2: TIẾN HÀNH ĐĂNG BÀI (Chỉ đăng tối đa 2 video mỗi phiên để an toàn)
-        posts_done = 0
-        logger.info("🎬 Bắt đầu luồng đăng bài...")
+        # BƯỚC 2: TIẾN HÀNH ĐẶT LỊCH ĐĂNG (KIỂU CUỐN CHIẾU)
+        logger.info("🎬 Bắt đầu luồng đặt lịch đăng bài cuốn chiếu (Round Robin)...")
         
-        for config in pages:
-            if posts_done >= 2: 
-                logger.info("🏁 Đã hoàn thành hạn mức đăng bài của phiên này (2 bài).")
-                break
+        total_scheduled_session = 0
+        MAX_TOTAL_VIDEOS = 50 # Giới hạn tổng để tránh timeout GitHub
+        
+        while total_scheduled_session < MAX_TOTAL_VIDEOS:
+            processed_anything = False
             
-            target_id = config['id_page_dich']
-            ten_page = config.get('ten_page') or "Không tên"
-            token = config.get('token_fb')
-            if not token: continue
+            for idx, config in enumerate(pages):
+                if total_scheduled_session >= MAX_TOTAL_VIDEOS: break
+                
+                target_id = config['id_page_dich']
+                ten_page = config.get('ten_page') or "Không tên"
+                token = config.get('token_fb')
+                if not token: continue
 
-            # Kiểm tra thời gian nghỉ giữa 2 bài đăng (tránh spam - ít nhất 6 tiếng)
-            try:
-                last = safe_execute(supabase.table("lich_su_video").select("thoi_gian_dang").eq("id_page", target_id).eq("trang_thai", "posted").order("thoi_gian_dang", desc=True).limit(1)).data
-                if last and last[0]['thoi_gian_dang']:
-                    l_time = datetime.fromisoformat(last[0]['thoi_gian_dang'].replace('Z', '+00:00'))
-                    if datetime.now(timezone.utc) - l_time < timedelta(hours=6):
-                        logger.info(f"   ⏳ Page {ten_page} đang trong thời gian nghỉ (Chưa đủ 6 tiếng).")
-                        continue
-            except: pass
+                # 1. Kiểm tra page này đã đủ 20 ngày chưa
+                current_days, _ = get_scheduled_info(target_id)
+                if current_days >= 20:
+                    continue
 
-            logger.info(f"🚀 Đang xử lý đăng bài cho Page: {ten_page}")
-            
-            # Lấy 1 video pending để đăng
-            res = safe_execute(supabase.rpc("lay_video_pending", {"p_id_page": str(target_id)}))
-            
-            if res.data:
+                # 2. Lấy 1 video pending cho page này
+                res = safe_execute(supabase.rpc("lay_video_pending", {"p_id_page": str(target_id)}))
+                if not res.data:
+                    continue
+
+                processed_anything = True
                 item = res.data[0]
                 vid_id = item['id_video']
-                l_aff = item['link_affiliate']
                 tieu_de_sach = item.get('tieu_de', 'Video Review')
                 
+                # Tính toán thời điểm đăng tiếp theo
+                sched_time = get_next_schedule_time(target_id, idx)
+
+                logger.info(f"🚀 Page [{ten_page}]: Đang xử lý 1 video gối đầu...")
                 path = None
                 try:
-                    # 3. Tải video
-                    path = download_video(vid_id, ua)
-                    if path:
-                        # 4. Spin video để lách bản quyền & chuyển sang dọc nếu cần
-                        success = process_video_spinning(path, ten_page)
-
-                        if success:
-                            # 5. Đăng Facebook
-                            v_fb_id = post_to_facebook(path, tieu_de_sach, l_aff, token, shared_session)
-                            if v_fb_id:
-                                update_posted_status(vid_id, target_id, v_fb_id)
-                                posts_done += 1
-                                logger.info(f"✅ Hoàn tất đăng video {vid_id}")
-                                
-                                if posts_done < 2:
-                                    wait = random.uniform(40, 70)
-                                    logger.info(f"⏳ Nghỉ {wait:.1f}s trước khi sang Page tiếp theo...")
-                                    time.sleep(wait)
-                            else:
-                                # Lỗi khi đăng (có thể do token hoặc FB chặn tạm thời)
-                                logger.error(f"❌ Lỗi khi đăng video {vid_id} lên FB. Chuyển sang pending.")
-                                safe_execute(supabase.table("lich_su_video").update({"trang_thai": "pending"}).eq("id", item['id']))
+                    path = download_video(vid_id)
+                    if path and process_video_spinning(path, ten_page):
+                        v_fb_id = post_to_facebook_scheduled(path, tieu_de_sach, token, shared_session, sched_time)
+                        if v_fb_id:
+                            update_scheduled_status(vid_id, target_id, v_fb_id, sched_time.isoformat())
+                            total_scheduled_session += 1
+                            logger.info(f"   ✅ Lên lịch thành công: {vid_id} -> {sched_time.strftime('%Y-%m-%d %H:%M')}")
+                            time.sleep(random.uniform(30, 60))
                         else:
-                            logger.error(f"❌ Xử lý video {vid_id} thất bại (Timeout/Lỗi FFmpeg). Bỏ qua.")
+                            logger.warning(f"   ⚠️ Lỗi upload bài {vid_id} cho {ten_page}. Sẽ thử lại sau.")
                             safe_execute(supabase.table("lich_su_video").update({"trang_thai": "pending"}).eq("id", item['id']))
                     else:
-                        # Lỗi khi tải (thường là do YouTube chặn hoặc video bị xóa) -> Đánh dấu thất bại vĩnh viễn
-                        logger.error(f"❌ Không thể tải video {vid_id}. Đánh dấu thất bại vĩnh viễn.")
+                        logger.error(f"   ❌ Lỗi tải/xử lý video {vid_id}. Đánh dấu thất bại.")
                         safe_execute(supabase.table("lich_su_video").update({"trang_thai": "failed"}).eq("id", item['id']))
                 except Exception as e:
-                    logger.error(f"⚠️ Lỗi nghiêm trọng khi xử lý video {vid_id}: {e}")
-                    safe_execute(supabase.table("lich_su_video").update({"trang_thai": "pending"}).eq("id", item['id']))
+                    logger.error(f"   ⚠️ Lỗi hệ thống: {e}")
+                    safe_execute(supabase.table("lich_su_video").update({"trang_thai": "failed"}).eq("id", item['id']))
                 finally:
-                    if path and os.path.exists(path):
-                        os.remove(path)
+                    if path and os.path.exists(path): os.remove(path)
+
+            if not processed_anything:
+                logger.info("🎯 Tất cả các page đã đủ lịch 20 ngày hoặc hết video trong kho.")
+                break
+
 
 if __name__ == "__main__":
     main()
