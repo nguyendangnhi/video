@@ -1,0 +1,21 @@
+# Bảo mật: Không đẩy key lên GitHub
+.env
+
+# File rác của Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# File tạm và Log của bot (Rất nặng, không nên đẩy lên)
+bot.log
+temp_video_*
+*.part
+*.ytdl
+output.mp4
+output_text.mp4
+test_processing.py
+
+# Môi trường ảo (nếu có)
+venv/
+.venv/
+env/
