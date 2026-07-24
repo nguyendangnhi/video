@@ -2,12 +2,8 @@ name: Auto Scraping and Posting to FB
 
 on:
   schedule:
-    # 07:00 VN (Chạy Discovery + Đăng bài)
-    - cron: '0 0 * * *'
-    # Các khung giờ phút 0 khác (Chỉ Đăng bài): 08:00-10:00 & 17:00-20:00 VN
-    - cron: '0 1-3,10-13 * * *'
-    # Các khung giờ phút 30 (Chỉ Đăng bài): 07:30-10:30 & 17:30-20:30 VN
-    - cron: '30 0-3,10-13 * * *'
+    # Chạy mỗi 12 tiếng (00:00 và 12:00 UTC, tương ứng 07:00 và 19:00 VN)
+    - cron: '0 */12 * * *'
   workflow_dispatch: 
 
 concurrency:
@@ -17,6 +13,7 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 300 # Tăng giới hạn lên 5 tiếng để thoải mái xử lý 30 ngày video
     
     steps:
       - name: Checkout code
@@ -61,3 +58,11 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python app.py
+
+      - name: Upload Bot Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bot-log-${{ github.run_id }}
+          path: bot.log
+          retention-days: 7
