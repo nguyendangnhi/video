@@ -27,10 +27,6 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Set up Node.js (For yt-dlp performance)
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
 
       # Tối ưu: Lưu lại các thư viện python để chạy nhanh hơn
       - name: Cache Pip
