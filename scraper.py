@@ -36,28 +36,27 @@ def get_random_ua():
     return random.choice(USER_AGENTS)
 
 def tao_link_affiliate_moi(url_goc, ma_affiliate, session):
-    """Chuyển đổi link Shopee sang link Affiliate Redirection (an_redir) chuẩn và kiểm tra link sống"""
+    """
+    Chuyển đổi link Shopee và kiểm tra link sống.
+    Trả về: (link_aff, status_code)
+    """
     try:
-        time.sleep(random.uniform(1.0, 3.0))
+        time.sleep(random.uniform(1.0, 2.0))
         headers = {'User-Agent': get_random_ua()}
         res = session.get(url_goc, headers=headers, allow_redirects=True, timeout=15)
         
         if res.status_code == 429:
-            logger.error("   ⛔ Shopee phát hiện Bot (429)! Đang nghỉ 60s...")
-            time.sleep(60)
-            return None
+            return None, 429
         
         if res.status_code != 200:
-            logger.warning(f"   ❌ Link không truy cập được (HTTP {res.status_code}): {url_goc}")
-            return None
+            return None, res.status_code
             
         final_url = res.url
         if final_url.split('?')[0].strip('/') == "https://shopee.vn":
-            logger.warning(f"   ❌ Link đã chết hoặc hết hạn (Bị redirect về trang chủ): {url_goc}")
-            return None
+            return None, 404
 
         if "mycollection.shop" in final_url:
-            return final_url
+            return final_url, 200
 
         match = (re.search(r'i\.(\d+)\.(\d+)', final_url) or 
                  re.search(r'product/(\d+)/(\d+)', final_url) or 
@@ -67,24 +66,20 @@ def tao_link_affiliate_moi(url_goc, ma_affiliate, session):
             s_id, i_id = match.groups()
             base_url = f"https://shopee.vn/product/{s_id}/{i_id}"
             encoded_url = quote(base_url)
-            return f"https://s.shopee.vn/an_redir?origin_link={encoded_url}&affiliate_id={ma_affiliate}&sub_id=fb_reels"
-        else:
-            logger.warning(f"   ❌ Không tìm thấy ID sản phẩm (Link không hợp lệ): {final_url}")
-            return None
+            aff_url = f"https://s.shopee.vn/an_redir?origin_link={encoded_url}&affiliate_id={ma_affiliate}&sub_id=fb_reels"
+            return aff_url, 200
+        
+        return None, 400
     except Exception as e:
-        logger.error(f"   ⚠️ Lỗi khi kiểm tra link {url_goc}: {e}")
-    return None
+        logger.error(f"   ⚠️ Lỗi network khi check link {url_goc}: {e}")
+        return None, 500
 
 def download_video(video_id):
     """Tải video chất lượng tốt nhất dùng yt-dlp với cơ chế retry và giả lập client"""
     url = f"https://www.youtube.com/watch?v={video_id}"
     path = f"temp_video_{video_id}.mp4"
     
-    client_combos = [
-        ['android', 'web'],
-        ['ios', 'mweb'],
-        ['tv', 'web']
-    ]
+    client_combos = [['android', 'web'], ['ios', 'mweb'], ['tv', 'web']]
     
     for i, clients in enumerate(client_combos):
         ydl_opts = {
@@ -96,12 +91,7 @@ def download_video(video_id):
             'retry_sleep': 20,
             'n_retries': 5,
             'fragment_retries': 10,
-            'concurrent_fragment_downloads': 1,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': clients,
-                }
-            }
+            'extractor_args': {'youtube': {'player_client': clients}}
         }
         
         try:
@@ -110,8 +100,7 @@ def download_video(video_id):
                 if os.path.exists(path):
                     return path
         except Exception as e:
-            error_msg = str(e)
-            if "Sign in to confirm you're not a bot" in error_msg:
+            if "Sign in to confirm you're not a bot" in str(e):
                 logger.warning(f"⚠️ YouTube chặn bot (Lần {i+1}). Đang thử đổi client...")
                 time.sleep(random.uniform(5, 10))
             else:
@@ -120,12 +109,11 @@ def download_video(video_id):
     return None
 
 def crawl_youtube_for_page(config, ma_affiliate, ua_string, session, check_exists_fn, save_video_fn, clean_title_fn, target_goal=90):
-    """Cào video mới nhất từ YouTube dựa trên danh sách từ khóa (nguon_raw)"""
+    """Cào video từ YouTube, phân biệt lỗi tạm thời và lỗi vĩnh viễn để Blacklist chuẩn"""
     target_page_id = config['id_page_dich']
     nguon_raw = config.get('link_nguon', '').strip()
     if not nguon_raw: return False
     
-    # Tách danh sách từ khóa bằng dấu phẩy và xáo trộn ngẫu nhiên
     keywords = [k.strip() for k in nguon_raw.split(',')]
     random.shuffle(keywords)
     
@@ -134,24 +122,16 @@ def crawl_youtube_for_page(config, ma_affiliate, ua_string, session, check_exist
 
     for selected in keywords:
         if found_count >= target_goal: break
-        
         logger.info(f"🔍 Đang cào từ khóa: '{selected}' (Mục tiêu: {found_count}/{target_goal})")
         
-        max_pages = 8 # Giảm số trang mỗi từ khóa để đa dạng hóa nguồn
-        # Ngẫu nhiên hóa số lượng kết quả mỗi trang để tránh bị phát hiện quy luật
+        max_pages = 8
         page_size = random.randint(30, 50)
+        is_yt_blocked = False
 
         for page in range(max_pages):
-            if found_count >= target_goal: break
-            
+            if found_count >= target_goal or is_yt_blocked: break
             start_idx = (page * page_size) + 1
             end_idx = start_idx + page_size - 1
-            
-            logger.info(f"   📡 Trang {page+1}: Quét video từ {start_idx} đến {end_idx}...")
-            
-            # Xoay vòng User Agent mới cho mỗi trang quét để chống bị YouTube soi
-            current_ua = get_random_ua()
-            search_query = selected if "youtube.com" in selected else f"ytsearch{end_idx}:{selected} #shorts"
             
             ydl_opts = {
                 'extract_flat': 'in_playlist',
@@ -159,43 +139,33 @@ def crawl_youtube_for_page(config, ma_affiliate, ua_string, session, check_exist
                 'playlistend': end_idx,
                 'quiet': True,
                 'no_warnings': True,
-                'user_agent': current_ua,
+                'user_agent': get_random_ua(),
                 'getcomments': False,
-                'sleep_interval': 5,
-                'max_sleep_interval': 12,
+                'sleep_interval': 3,
+                'max_sleep_interval': 8,
                 'match_filter': lambda info, *, incomplete: 'Video too long' if info.get('duration') and info.get('duration') > 600 else None,
-                'extractor_args': {
-                    'youtube': {
-                        'player_client': ['android', 'ios', 'web'],
-                    }
-                }
+                'extractor_args': {'youtube': {'player_client': ['android', 'ios', 'web']}}
             }
 
             try:
+                search_query = selected if "youtube.com" in selected else f"ytsearch{end_idx}:{selected} #shorts"
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     search_results = ydl.extract_info(search_query, download=False)
                     entries = search_results.get('entries', [])
-                    
-                    if not entries:
-                        logger.warning("      ⚠️ Không còn video nào để quét cho từ khóa này.")
-                        break
+                    if not entries: break
 
-                    new_videos_in_page = 0
                     for entry in entries:
-                        if not entry: continue
-                        
+                        if not entry or found_count >= target_goal or is_yt_blocked: continue
                         v_id = entry['id']
-                        if check_exists_fn(v_id, target_page_id): 
-                            continue
-
-                        new_videos_in_page += 1
+                        if check_exists_fn(v_id, target_page_id): continue
+                        
                         try:
-                            # 1. Lấy thông tin video
+                            # 1. Trích xuất thông tin chi tiết
                             video_info = ydl.extract_info(f"https://www.youtube.com/watch?v={v_id}", download=False)
                             v_desc = video_info.get('description') or ''
-                            
-                            # 2. Check comment nếu desc không có link
                             all_text = v_desc
+                            
+                            # 2. Check comments nếu desc không có link
                             if not re.search(shopee_regex, all_text):
                                 cmt_opts = ydl_opts.copy()
                                 cmt_opts.update({'getcomments': True, 'max_comments': 10})
@@ -204,64 +174,55 @@ def crawl_youtube_for_page(config, ma_affiliate, ua_string, session, check_exist
                                     v_comments = video_info_cmt.get('comments') or []
                                     all_text += "\n" + "\n".join([c.get('text', '') for c in v_comments if c.get('text')])
 
-                            # 3. Trích xuất tiêu đề và link
-                            # Tách theo dòng để lấy tiêu đề đứng trước link
-                            lines = all_text.split('\n')
+                            # 3. Phân tích link
                             found_pairs = []
                             seen_links = set()
-
-                            for line in lines:
+                            for line in all_text.split('\n'):
                                 m = re.search(shopee_regex, line)
                                 if m:
                                     link = m.group(1)
                                     if link in seen_links: continue
-                                    
-                                    # Lấy phần text trước link làm tiêu đề, xóa số thứ tự cũ, icon thừa
-                                    title_part = line.split(link)[0].strip()
-                                    title_part = re.sub(r'^[\d\.\-\s]+', '', title_part) # Xóa "1.", "2-", ...
-                                    title_part = title_part.strip(':- ').strip()
-                                    
-                                    if not title_part: title_part = "Sản phẩm review"
-                                    
-                                    found_pairs.append({'title': title_part, 'url': link})
+                                    title_part = re.sub(r'^[\d\.\-\s]+', '', line.split(link)[0].strip()).strip(':- ').strip()
+                                    found_pairs.append({'title': title_part or "Sản phẩm review", 'url': link})
                                     seen_links.add(link)
-                                    if len(found_pairs) >= 7: break # Lấy tối đa 7 link
+                                    if len(found_pairs) >= 7: break
 
                             if not found_pairs:
-                                logger.info(f"      ⏭️ Bỏ qua {v_id}: Không tìm thấy link Shopee. Đưa vào blacklist.")
+                                logger.info(f"      ⏭️ Blacklist {v_id}: Không thấy link Shopee.")
                                 save_video_fn(v_id, target_page_id, "Không có link Shopee", "BLACKLIST")
                                 continue
 
+                            # 4. Chuyển đổi link
                             aff_list = []
+                            is_sh_blocked = False
                             for pair in found_pairs:
-                                aff_link = tao_link_affiliate_moi(pair['url'], ma_affiliate, session)
-                                if aff_link:
-                                    # Lưu dạng "Tiêu đề|Link" để SQL xử lý
-                                    aff_list.append(f"{pair['title']}|{aff_link}")
+                                aff_link, status = tao_link_affiliate_moi(pair['url'], ma_affiliate, session)
+                                if status == 429: is_sh_blocked = True; break
+                                if aff_link: aff_list.append(f"{pair['title']}|{aff_link}")
                             
+                            if is_sh_blocked:
+                                logger.warning(f"      ⛔ Tạm bỏ qua {v_id}: Shopee chặn Bot.")
+                                continue 
+
                             if not aff_list:
-                                logger.info(f"      ⏭️ Bỏ qua {v_id}: Có link nhưng không chuyển đổi được (link chết/hết hạn).")
+                                logger.info(f"      ⏭️ Blacklist {v_id}: Link chết/hết hạn.")
                                 save_video_fn(v_id, target_page_id, "Link Shopee không hợp lệ", "BLACKLIST")
                                 continue
 
-                            all_links_str = "\n".join(aff_list)
-                            cleaned_tieu_de = clean_title_fn(video_info.get('title', ''))
-                            save_video_fn(v_id, target_page_id, cleaned_tieu_de, all_links_str)
-                            
+                            # 5. Lưu video
+                            save_video_fn(v_id, target_page_id, clean_title_fn(video_info.get('title', '')), "\n".join(aff_list))
                             found_count += 1
-                            logger.info(f"      ✅ Đã nạp mới: {v_id} (Tổng: {found_count})")
-                            # Tăng delay lên 5-10s để hành vi giống người dùng thật hơn
-                            time.sleep(random.uniform(5, 10))
+                            logger.info(f"      ✅ Đã nạp: {v_id} (Tổng: {found_count})")
+                            time.sleep(random.uniform(3, 7))
 
-                            if found_count >= target_goal: break
                         except Exception as e:
-                            logger.warning(f"      ⚠️ Lỗi video {v_id}: {e}")
-                            continue
+                            err = str(e)
+                            if any(msg in err for msg in ["age-restricted", "private video", "removed by the uploader"]):
+                                save_video_fn(v_id, target_page_id, "Video không khả dụng", "BLACKLIST")
+                            elif "Sign in to confirm you're not a bot" in err:
+                                is_yt_blocked = True; break
+                            else: continue
 
-                    if new_videos_in_page == 0 and page > 0:
-                        logger.info(f"   ⏭️ Từ khóa '{selected}' hết video mới ở trang {page+1}. Chuyển từ khóa tiếp theo...")
-                        break
-                        
             except Exception as e:
                 logger.error(f"⚠️ Lỗi cào trang {page+1}: {e}")
                 break
