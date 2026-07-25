@@ -2,8 +2,8 @@ name: Auto Scraping and Posting to FB
 
 on:
   schedule:
-    # Chạy mỗi 12 tiếng (00:00 và 12:00 UTC, tương ứng 07:00 và 19:00 VN)
-    - cron: '0 */12 * * *'
+    # Chạy mỗi 8 tiếng (3 lần/ngày: 00:00, 08:00, 16:00 UTC)
+    - cron: '0 */8 * * *'
   workflow_dispatch: 
 
 concurrency:
