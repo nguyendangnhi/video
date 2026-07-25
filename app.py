@@ -300,7 +300,7 @@ def post_to_facebook_scheduled(video_path, title, page_token, session, scheduled
     return None
 
 def get_next_schedule_time(page_id, page_index):
-    """Tính toán thời gian đăng bài: 3 bài/ngày (7h, 13h, 19h) và so le 10p giữa các page"""
+    """Tính toán thời gian đăng bài: 2 bài/ngày (7h, 19h) và so le 10p giữa các page"""
     try:
         # 1. Lấy bài gần nhất
         res = safe_execute(supabase.table("lich_su_video")
@@ -311,7 +311,7 @@ def get_next_schedule_time(page_id, page_index):
                            .limit(1))
         
         now = datetime.now(timezone.utc)
-        slots = [0, 6, 12]  # Giờ UTC tương ứng với 7h, 13h, 19h Việt Nam (UTC+7)
+        slots = [0, 12]  # Giờ UTC tương ứng với 7h, 19h Việt Nam (UTC+7)
         offset_minutes = page_index * 10  # So le 10 phút mỗi page
         
         if res.data and res.data[0]['thoi_gian_dang']:
@@ -344,7 +344,7 @@ def get_next_schedule_time(page_id, page_index):
         return datetime.now(timezone.utc) + timedelta(hours=1)
 
 def get_scheduled_info(page_id):
-    """Kiểm tra xem page đã được đặt lịch đến bao nhiêu ngày tới (Dựa trên 3 bài/ngày)"""
+    """Kiểm tra xem page đã được đặt lịch đến bao nhiêu ngày tới (Dựa trên 2 bài/ngày)"""
     try:
         res = safe_execute(supabase.table("lich_su_video")
                            .select("thoi_gian_dang")
@@ -355,14 +355,14 @@ def get_scheduled_info(page_id):
         
         now = datetime.now(timezone.utc)
         if not res.data or not res.data[0]['thoi_gian_dang']:
-            return 0, 60  # 20 ngày * 3 bài = 60
+            return 0, 60  # 30 ngày * 2 bài = 60
             
         last_time = datetime.fromisoformat(res.data[0]['thoi_gian_dang'].replace('Z', '+00:00'))
         if last_time < now: return 0, 60
             
         delta = last_time - now
         days_covered = delta.days
-        total_needed = max(0, (20 - days_covered) * 3)
+        total_needed = max(0, (30 - days_covered) * 2)
         
         return days_covered, total_needed
     except Exception as e:
@@ -396,8 +396,8 @@ def main():
 
             logger.info(f"📊 Page [{ten_p}]: Đã có lịch {days_covered} ngày. Kho pending: {pending_count} video.")
 
-            # Nếu tổng (đã đặt lịch + pending) < 20 ngày (60 bài) -> Cào thêm đúng số lượng còn thiếu
-            total_current = (days_covered * 3 + pending_count)
+            # Nếu tổng (đã đặt lịch + pending) < 30 ngày (60 bài) -> Cào thêm đúng số lượng còn thiếu
+            total_current = (days_covered * 2 + pending_count)
             if total_current < 60:
                 needed_now = 60 - total_current
                 logger.info(f"   🚀 Thiếu hụt nội dung! Cần thêm {needed_now} video cho {ten_p}...")
@@ -424,9 +424,9 @@ def main():
                 token = config.get('token_fb')
                 if not token: continue
 
-                # 1. Kiểm tra page này đã đủ 20 ngày chưa
+                # 1. Kiểm tra page này đã đủ 30 ngày chưa
                 current_days, _ = get_scheduled_info(target_id)
-                if current_days >= 20:
+                if current_days >= 30:
                     continue
 
                 # 2. Lấy 1 video pending cho page này
