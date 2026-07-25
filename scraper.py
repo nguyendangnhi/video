@@ -227,26 +227,33 @@ def crawl_youtube_for_page(config, ma_affiliate, ua_string, session, check_exist
                                     seen_links.add(link)
                                     if len(found_pairs) >= 7: break # Lấy tối đa 7 link
 
-                            if found_pairs:
-                                aff_list = []
-                                for pair in found_pairs:
-                                    aff_link = tao_link_affiliate_moi(pair['url'], ma_affiliate, session)
-                                    if aff_link:
-                                        # Lưu dạng "Tiêu đề|Link" để SQL xử lý
-                                        aff_list.append(f"{pair['title']}|{aff_link}")
-                                
-                                if not aff_list: continue
+                            if not found_pairs:
+                                logger.info(f"      ⏭️ Bỏ qua {v_id}: Không tìm thấy link Shopee. Đưa vào blacklist.")
+                                save_video_fn(v_id, target_page_id, "Không có link Shopee", "BLACKLIST")
+                                continue
 
-                                all_links_str = "\n".join(aff_list)
-                                cleaned_tieu_de = clean_title_fn(video_info.get('title', ''))
-                                save_video_fn(v_id, target_page_id, cleaned_tieu_de, all_links_str)
-                                
-                                found_count += 1
-                                logger.info(f"      ✅ Đã nạp mới: {v_id} (Tổng: {found_count})")
-                                # Tăng delay lên 5-10s để hành vi giống người dùng thật hơn
-                                time.sleep(random.uniform(5, 10))
+                            aff_list = []
+                            for pair in found_pairs:
+                                aff_link = tao_link_affiliate_moi(pair['url'], ma_affiliate, session)
+                                if aff_link:
+                                    # Lưu dạng "Tiêu đề|Link" để SQL xử lý
+                                    aff_list.append(f"{pair['title']}|{aff_link}")
+                            
+                            if not aff_list:
+                                logger.info(f"      ⏭️ Bỏ qua {v_id}: Có link nhưng không chuyển đổi được (link chết/hết hạn).")
+                                save_video_fn(v_id, target_page_id, "Link Shopee không hợp lệ", "BLACKLIST")
+                                continue
 
-                                if found_count >= target_goal: break
+                            all_links_str = "\n".join(aff_list)
+                            cleaned_tieu_de = clean_title_fn(video_info.get('title', ''))
+                            save_video_fn(v_id, target_page_id, cleaned_tieu_de, all_links_str)
+                            
+                            found_count += 1
+                            logger.info(f"      ✅ Đã nạp mới: {v_id} (Tổng: {found_count})")
+                            # Tăng delay lên 5-10s để hành vi giống người dùng thật hơn
+                            time.sleep(random.uniform(5, 10))
+
+                            if found_count >= target_goal: break
                         except Exception as e:
                             logger.warning(f"      ⚠️ Lỗi video {v_id}: {e}")
                             continue

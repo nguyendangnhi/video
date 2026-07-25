@@ -208,15 +208,24 @@ def get_config_from_db():
     return "17394180064", DEFAULT_USER_AGENT
 
 def check_video_exists(video_id, page_id):
-    """Kiểm tra video đã được xử lý cho Page này chưa"""
+    """Kiểm tra video đã được xử lý hoặc nằm trong blacklist chưa"""
     try:
+        # 1. Kiểm tra blacklist toàn cục
+        res_bl = safe_execute(supabase.table("video_blacklist").select("id_video").eq("id_video", str(video_id)))
+        if res_bl.data: return True
+        
+        # 2. Kiểm tra lịch sử page
         res = safe_execute(supabase.table("lich_su_video").select("id").eq("id_video", str(video_id)).eq("id_page", str(page_id)))
         return len(res.data) > 0
     except: return False
 
 def save_pending_video(video_id, page_id, tieu_de, link_aff):
-    """Lưu video vào hàng đợi để đăng sau"""
+    """Lưu video vào hàng đợi hoặc blacklist nếu link_aff='BLACKLIST'"""
     try:
+        if link_aff == "BLACKLIST":
+            safe_execute(supabase.table("video_blacklist").upsert({"id_video": str(video_id), "ly_do": tieu_de}))
+            return
+
         data = {
             "id_video": str(video_id),
             "id_page": str(page_id),
@@ -226,7 +235,8 @@ def save_pending_video(video_id, page_id, tieu_de, link_aff):
         }
         safe_execute(supabase.table("lich_su_video").insert(data))
     except Exception as e:
-        logger.error(f"⚠️ Lỗi lưu video {video_id}: {e}")
+        if "duplicate key" not in str(e).lower():
+            logger.error(f"⚠️ Lỗi lưu video {video_id}: {e}")
 
 def update_scheduled_status(video_id, page_id, video_fb_id, scheduled_time_iso):
     """Cập nhật trạng thái sau khi đã đặt lịch đăng thành công"""
