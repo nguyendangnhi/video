@@ -190,11 +190,11 @@ def process_video_spinning(input_path, page_name="Review Pro"):
         cmd = ['ffmpeg', '-y', '-ss', str(start_trim), '-i', input_path,
                '-filter_complex', filter_complex, '-map', '[v]']
         
-        # Chỉ map audio và trộn thêm nhiễu trắng cực nhỏ (1%) để lách bản quyền âm thanh
+        # Chỉ map audio và spin âm thanh để lách bản quyền AI
         if has_audio:
-            # atempo: đổi tốc độ, aeval+amix: chèn nhiễu trắng siêu nhỏ để đổi Fingerprint âm thanh
-            # Đã sửa lỗi cú pháp aeval: bọc biểu thức trong dấu nháy đơn
-            audio_filter = f"atempo={speed},asplit[a1][a2];[a2]aeval='random(0)|random(0)':s=44100,volume=0.01[noise];[a1][noise]amix=inputs=2:duration=first"
+            # atempo: đổi tốc độ, volume: đổi biên độ, treble: đổi tần số nhẹ (lách fingerprint cực tốt)
+            # aformat: ép chuẩn stereo để tránh lỗi "0 channels"
+            audio_filter = f"atempo={speed},volume=1.02,treble=g=0.2,aformat=sample_rates=44100:channel_layouts=stereo"
             cmd.extend(['-map', '0:a', '-af', audio_filter, '-c:a', 'aac', '-b:a', '128k'])
         
         cmd.extend(['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
