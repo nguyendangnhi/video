@@ -41,9 +41,17 @@ def tao_link_affiliate_moi(url_goc, ma_affiliate, session):
     Trả về: (link_aff, status_code)
     """
     try:
-        time.sleep(random.uniform(1.0, 2.0))
-        headers = {'User-Agent': get_random_ua()}
-        res = session.get(url_goc, headers=headers, allow_redirects=True, timeout=15)
+        # Tăng độ trễ nhẹ và giả lập header đầy đủ để tránh bị chặn
+        time.sleep(random.uniform(1.2, 2.5))
+        headers = {
+            'User-Agent': get_random_ua(),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,webp,*/*;q=0.8',
+            'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Referer': 'https://www.facebook.com/',
+            'Cache-Control': 'no-cache'
+        }
+        
+        res = session.get(url_goc, headers=headers, allow_redirects=True, timeout=20)
         
         if res.status_code == 429:
             return None, 429
@@ -52,20 +60,48 @@ def tao_link_affiliate_moi(url_goc, ma_affiliate, session):
             return None, res.status_code
             
         final_url = res.url
-        if final_url.split('?')[0].strip('/') == "https://shopee.vn":
+        base_path = final_url.split('?')[0].strip('/')
+        
+        # 1. Kiểm tra nếu bị đá về trang chủ hoặc trang tìm kiếm (Link đã chết)
+        if base_path in ["https://shopee.vn", "https://shopee.vn/search", "https://shopee.vn/all_categories"]:
             return None, 404
 
+        # 2. Kiểm tra nội dung trang để phát hiện sản phẩm bị xóa/ẩn (Chính xác nhất)
+        # Chỉ lấy 15kb đầu tiên để tối ưu tốc độ
+        content_low = res.text[:15000].lower()
+        dead_indicators = [
+            "sản phẩm không tồn tại", "sp_not_found", "sản phẩm đã bị xóa", 
+            "đã bị ẩn", "không tìm thấy sản phẩm", "hết hàng", 
+            "ngừng kinh doanh", "không còn bán", "đã bán hết",
+            "out of stock", "sold_out", "item_not_exist"
+        ]
+        if any(ind in content_low for ind in dead_indicators):
+            return None, 404
+
+        # 3. Giữ nguyên chức năng cho link MyCollection
         if "mycollection.shop" in final_url:
             return final_url, 200
 
-        match = (re.search(r'i\.(\d+)\.(\d+)', final_url) or 
-                 re.search(r'product/(\d+)/(\d+)', final_url) or 
-                 re.search(r'shopee\.vn/[^/]+/(\d+)/(\d+)', final_url))
+        # 4. Trích xuất ID với regex cải tiến
+        # Thử các mẫu đường dẫn truyền thống trước
+        match_ids = (re.search(r'i\.(\d+)\.(\d+)', final_url) or 
+                     re.search(r'product/(\d+)/(\d+)', final_url) or 
+                     re.search(r'shopee\.vn/[^/]+/(\d+)/(\d+)', final_url))
         
-        if match:
-            s_id, i_id = match.groups()
+        s_id, i_id = None, None
+        if match_ids:
+            s_id, i_id = match_ids.groups()
+        else:
+            # Thử tìm theo tham số query (dành cho link từ App hoặc link quảng cáo)
+            m_s = re.search(r'shopid=(\d+)', final_url)
+            m_i = re.search(r'itemid=(\d+)', final_url)
+            if m_s and m_i:
+                s_id, i_id = m_s.group(1), m_i.group(1)
+        
+        if s_id and i_id:
             base_url = f"https://shopee.vn/product/{s_id}/{i_id}"
             encoded_url = quote(base_url)
+            # Giữ nguyên cấu trúc link affiliate của bạn
             aff_url = f"https://s.shopee.vn/an_redir?origin_link={encoded_url}&affiliate_id={ma_affiliate}&sub_id=fb_reels"
             return aff_url, 200
         

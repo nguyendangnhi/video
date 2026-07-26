@@ -33,7 +33,7 @@ DEFAULT_USER_AGENT = get_random_ua()
 # --- CÁC HÀM TIỆN ÍCH ---
 def cleanup_temp_files():
     """Dọn dẹp các file video tạm và file rác từ yt-dlp"""
-    patterns = ["temp_video_*.mp4", "*.part", "*.temp", "*.ytdl"]
+    patterns = ["temp_video_*.mp4", "*.part", "*.temp", "*.ytdl", "logo_*.txt"]
     for pattern in patterns:
         files = glob.glob(pattern)
         for f in files:
@@ -66,44 +66,57 @@ HASHTAG_POOLS = [
 ]
 
 def clean_title(title):
-    """Làm sạch tiêu đề: Xóa ngoặc, cập nhật năm, thêm hashtag xoay vòng"""
-    if not title: return f"Video Review {random.choice(HASHTAG_POOLS)}"
+    """Làm sạch và spin tiêu đề để tránh bị Facebook quét trùng lặp/spam"""
+    if not title: title = "Video Review"
     
     # 1. Xóa các đoạn trong ngoặc (ví dụ: (Full), [Review]...)
     title = re.sub(r'[\(\[][^()]*[\)\]]', '', title)
     
-    # 2. Cập nhật các năm cũ thành năm hiện tại
+    # 2. Cập nhật năm cũ thành năm hiện tại
     now = datetime.now()
     current_year = now.year
     title = re.sub(r'\b20\d{2}\b', lambda m: str(current_year) if int(m.group(0)) < current_year else m.group(0), title)
     
-    # 3. Xóa hashtag cũ của YouTube
+    # 3. Xóa hashtag cũ của YouTube và từ khóa rác
     title = re.sub(r'#\S+', '', title)
-    
-    # 4. Xóa các từ khóa YouTube phổ biến/thừa
-    bad_words = ['shorts', 'video', 'nha', 'đây', 'tại đây']
+    bad_words = ['shorts', 'video', 'nha', 'đây', 'tại đây', 'clip']
     for word in bad_words:
         title = re.sub(f'(?i)\\b{word}\\b', '', title)
 
-    # 5. Dọn dẹp khoảng trắng thừa
-    title = re.sub(r'\s+', ' ', title).strip()
-    title = title.strip('-_ ')
+    title = re.sub(r'\s+', ' ', title).strip().strip('-_ ')
+    title = title.capitalize()
+
+    # 4. SPINNING: Thêm tiền tố ngẫu nhiên
+    prefixes = ["Wow!", "Góc review:", "Siêu phẩm", "Đỉnh thật sự", "Cái này lạ nè", "Review tâm huyết:", "Must-have item:", "Xịn xò chưa", "Gom lúa thôi", "Tin được không?"]
+    prefix = random.choice(prefixes) if random.random() > 0.4 else ""
+
+    # 5. SPINNING: Trộn Hashtag ngẫu nhiên từ pool lớn
+    all_hashtags = ["#review", "#shopeehaul", "#muataishopee", "#xuhuong", "#trending", "#reviewlamdep", "#gocreview", "#shopeevn", "#unbox", "#reviewthongminh", "#dogiadung", "#tienich", "#shopeecheck", "#sale", "#muasắm", "#fyp", "#meovat", "#ReviewThucTe", "#hot"]
+    chosen_hashtags = random.sample(all_hashtags, k=random.randint(4, 6))
     
-    # 6. Thêm bộ hashtag xoay vòng
-    hashtags = random.choice(HASHTAG_POOLS)
-    return f"{title.capitalize()} {hashtags}"
+    # 6. SPINNING: Thêm Emoji ngẫu nhiên vào cuối tiêu đề
+    random_emos = "".join(random.choices(["✨", "🔥", "✅", "💎", "📌", "🌈", "⭐", "🎀"], k=2))
+
+    final_title = f"{prefix} {title} {random_emos} {' '.join(chosen_hashtags)}".strip()
+    
+    # 7. ANTI-SPAM: Chèn một ký tự vô hình ngẫu nhiên vào cuối để Hash text luôn khác nhau
+    invisible_chars = ['\u200b', '\u200c', '\u200d']
+    return final_title + random.choice(invisible_chars)
 
 def process_video_spinning(input_path, page_name="Review Pro"):
     """Phân loại 3 loại video và xử lý lách bản quyền thông minh theo đúng yêu cầu"""
     output_path = input_path.replace(".mp4", "_processed.mp4")
     text_file = None
     try:
-        # 1. Lấy thông số kích thước gốc để phân loại
-        cmd_probe = ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'json', input_path]
+        # 1. Kiểm tra thông số video và sự tồn tại của audio stream
+        cmd_probe = ['ffprobe', '-v', 'error', '-show_entries', 'stream=codec_type,width,height', '-of', 'json', input_path]
         probe_res = subprocess.run(cmd_probe, capture_output=True, text=True, timeout=15)
         probe_data = json.loads(probe_res.stdout)
-        w = int(probe_data['streams'][0]['width'])
-        h = int(probe_data['streams'][0]['height'])
+        
+        has_audio = any(s['codec_type'] == 'audio' for s in probe_data['streams'])
+        video_stream = next(s for s in probe_data['streams'] if s['codec_type'] == 'video')
+        w = int(video_stream['width'])
+        h = int(video_stream['height'])
 
         # 2. Thông số lách bản quyền chung
         speed = random.uniform(1.03, 1.06)
@@ -111,33 +124,35 @@ def process_video_spinning(input_path, page_name="Review Pro"):
         text_file = f"logo_{random.getrandbits(32)}.txt"
         with open(text_file, "w", encoding="utf-8") as f: f.write(page_name)
         
-        # Ngẫu nhiên hóa màu sắc và vị trí logo (chỉ 2 góc trên)
+        # Ngẫu nhiên hóa màu sắc và vị trí logo (Linh hoạt y: 30-50)
         br = random.uniform(0.02, 0.05)
         sa = random.uniform(1.1, 1.3)
         co = random.uniform(1.03, 1.08)
-        logo_x = random.choice(["35", "w-tw-35"]) # Trái hoặc Phải
-        logo_y = "35" # Luôn ở phía trên
+        logo_x = random.choice(["35", "w-text_w-35"]) # Đã thay tw bằng text_w
+        logo_y = str(random.randint(30, 50)) 
         
         font_cfg = "font='Arial'" if os.name == 'nt' else "fontfile='/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf'"
         logo_filter = f"drawtext={font_cfg}:textfile='{text_file}':x={logo_x}:y={logo_y}:fontsize=32:fontcolor=white:borderw=2.5:bordercolor=black@0.8"
         
-        # Bộ lọc lách bản quyền (Spinning) nâng cao
+        # Bộ lọc lách bản quyền nâng cao (Dùng biểu thức động để đổi Hash liên tục)
         zoom = random.uniform(1.02, 1.04)
-        # Thêm vignette (mờ góc) và ngẫu nhiên hóa eq
-        spin_filters = f"scale=iw*{zoom}:-2,crop=iw:ih,noise=alls=1:allf=t,eq=brightness={br}:saturation={sa}:contrast={co},unsharp=5:5:1.0:5:5:0.0,vignette=PI/20,{logo_filter},setpts={pts}*PTS"
+        start_trim = random.uniform(0.1, 0.4)
+        # Dynamic EQ: Thay đổi nhẹ độ sáng/tương phản theo thời gian t để lách Fingerprint AI
+        eq_filter = f"eq=brightness='{br}+0.01*sin(t)':saturation='{sa}+0.02*cos(t)':contrast='{co}+0.01*sin(t/2)'"
+        spin_filters = f"scale=iw*{zoom}:-2,crop=iw:ih,noise=alls=1:allf=t,{eq_filter},unsharp=5:5:1.0:5:5:0.0,vignette=PI/20,{logo_filter},setpts={pts}*PTS"
 
         # 3. PHÂN LOẠI VÀ CHỌN BỘ LỌC TỐI ƯU
         if h > w:
             # --- LOẠI 1: VIDEO DỌC CHUẨN ---
-            logger.info(f"   📱 Loại 1 (Dọc chuẩn): {w}x{h}. Chuẩn hóa 9:16 (720p) và lách bản quyền.")
-            vf = f"scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black,{spin_filters}"
+            logger.info(f"   📱 Loại 1 (Dọc chuẩn): {w}x{h}. Chuẩn hóa 9:16 (1080p) và lách bản quyền.")
+            vf = f"scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,{spin_filters}"
             filter_complex = f"[0:v]{vf}[v]"
         else:
             # Kiểm tra xem là Ngang Full (Loại 2) hay Dọc-trong-Ngang (Loại 3)
             logger.info(f"   🖥️ Video Ngang: {w}x{h}. Đang phân tích nội dung...")
             # Sử dụng edgedetect để bỏ qua vùng nền mờ/tĩnh, chỉ lấy vùng nội dung sắc nét
             vf_detect = "edgedetect=low=0.1:high=0.2,cropdetect=40:16:0"
-            cmd_detect = ['ffmpeg', '-ss', '00:00:15', '-i', input_path, '-t', '3', '-vf', vf_detect, '-f', 'null', '-']
+            cmd_detect = ['ffmpeg', '-ss', '00:00:10', '-i', input_path, '-t', '10', '-vf', vf_detect, '-f', 'null', '-']
             detect_res = subprocess.run(cmd_detect, capture_output=True, text=True, timeout=45)
             # Sử dụng regex linh hoạt để bắt cả số âm (một số bản ffmpeg trả về h âm khi detect từ dưới lên)
             crops = re.findall(r'crop=(-?\d+):(-?\d+):(-?\d+):(-?\d+)', detect_res.stderr)
@@ -164,17 +179,27 @@ def process_video_spinning(input_path, page_name="Review Pro"):
             else:
                 # --- LOẠI 2: NGANG FULL MÀN HÌNH ---
                 logger.info("   📺 Loại 2 (Ngang Full): Thêm nền mờ để biến thành khung dọc 9:16 (720p Optimized).")
+                # Chuyển từ gblur sang boxblur để tăng tốc độ render gấp 2-3 lần
                 filter_complex = (
-                    f"[0:v]scale=405:720:force_original_aspect_ratio=increase,crop=405:720,gblur=sigma=20,scale=720:1280[bg];"
+                    f"[0:v]scale=405:720:force_original_aspect_ratio=increase,crop=405:720,boxblur=20:5,scale=720:1280[bg];"
                     f"[0:v]scale=720:1280:force_original_aspect_ratio=decrease[fg];"
                     f"[bg][fg]overlay=(W-w)/2:(H-h)/2,{spin_filters}[v]"
                 )
 
         # 4. Thực thi FFmpeg với các flag tối ưu: FPS 30, xóa metadata, faststart
-        cmd = ['ffmpeg', '-y', '-i', input_path, '-filter_complex', filter_complex, '-map', '[v]', '-map', '0:a?',
-               '-af', f"atempo={speed}", '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
-               '-pix_fmt', 'yuv420p', '-r', '30', '-map_metadata', '-1', '-movflags', '+faststart',
-               '-c:a', 'aac', '-b:a', '128k', output_path]
+        # Dùng -ss trước -i để cắt đồng bộ cả A/V và tăng tốc độ xử lý
+        cmd = ['ffmpeg', '-y', '-ss', str(start_trim), '-i', input_path,
+               '-filter_complex', filter_complex, '-map', '[v]']
+        
+        # Chỉ map audio và trộn thêm nhiễu trắng cực nhỏ (1%) để lách bản quyền âm thanh
+        if has_audio:
+            # atempo: đổi tốc độ, aeval+amix: chèn nhiễu trắng siêu nhỏ để đổi Fingerprint âm thanh
+            audio_filter = f"atempo={speed},asplit[a1][a2];[a2]aeval=val(0)|random(0):sample_rate=44100,volume=0.01[noise];[a1][noise]amix=inputs=2:duration=first"
+            cmd.extend(['-map', '0:a', '-af', audio_filter, '-c:a', 'aac', '-b:a', '128k'])
+        
+        cmd.extend(['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+                    '-pix_fmt', 'yuv420p', '-r', '30', '-map_metadata', '-1', '-movflags', '+faststart',
+                    output_path])
         
         logger.info(f"   🎬 Đang xử lý video: {os.path.basename(input_path)}")
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=2000)
@@ -254,11 +279,11 @@ def update_scheduled_status(video_id, page_id, video_fb_id, scheduled_time_iso):
 
 def get_random_cta():
     """Tạo câu kêu gọi hành động ngẫu nhiên để tránh bị Facebook quét spam"""
-    prefixes = ["👇", "📍", "🔗", "✨", "🔥", "👉", "✅"]
-    verbs = ["Xem", "Lấy", "Check ngay", "Mua tại", "Sắm ngay", "Link", "Món này"]
-    objects = ["link sản phẩm", "món này", "link mua hàng", "em nó", "đồ", "món mình review"]
-    locations = ["ở dưới bình luận", "trong phần comment", "dưới cmt", "tại bình luận", "phía dưới nhé"]
-    suffixes = ["nhé", "nha", "nhen", "ạ", "cả nhà", "nè", "nha quý vị"]
+    prefixes = ["👇", "📍", "🔗", "✨", "🔥", "👉", "✅", "💎", "📌", "🎬"]
+    verbs = ["Xem", "Lấy", "Check ngay", "Mua tại", "Sắm ngay", "Link", "Món này", "Sở hữu ngay", "Đặt mua"]
+    objects = ["link sản phẩm", "món này", "link mua hàng", "em nó", "đồ", "món mình review", "siêu phẩm này", "item cực hot"]
+    locations = ["ở dưới bình luận", "trong phần comment", "dưới cmt", "tại bình luận", "phía dưới nhé", "ở ngay cmt đầu"]
+    suffixes = ["nhé", "nha", "nhen", "ạ", "cả nhà", "nè", "nha quý vị", "nha mọi người", "nha các bác"]
 
     p = random.choice(prefixes)
     v = random.choice(verbs)
@@ -266,19 +291,76 @@ def get_random_cta():
     l = random.choice(locations)
     s = random.choice(suffixes)
 
+    # Thêm yếu tố ngẫu nhiên cực cao (Random Entropy)
+    decor = "".join(random.choices(["✨", "🔥", "🌈", "⭐", "🎀", "🎈", "🍀", "💎"], k=random.randint(1, 3)))
+    
     patterns = [
-        f"{p} {v} {o} {l} {s}!",
-        f"{p} {v} {o} {l}",
-        f"{v} {o} {l} {p}",
-        f"{o} {l} {s} {p}"
+        f"{p} {v} {o} {l} {s} {decor}",
+        f"{decor} {v} {o} {l} {p}",
+        f"{v} {o} {l} {s} {p} {decor}",
+        f"{p} {v} {o} {l} {decor}"
     ]
     return random.choice(patterns)
+
+def get_random_filler():
+    """Tạo các câu cảm thán ngẫu nhiên cực kỳ đa dạng để lách AI Facebook"""
+    # Danh sách các câu cảm thán theo nhiều sắc thái
+    fillers = [
+        "Mê mẩn từ cái nhìn đầu tiên luôn á",
+        "Cái này mà không mua thì hơi phí nha",
+        "Đúng là chân ái cho hội chị em mình luôn",
+        "Nhìn thôi đã thấy xịn xò rồi đúng không nào?",
+        "Chất lượng thực sự vượt mong đợi luôn",
+        "Tiền nào của nấy, đáng đồng tiền bát gạo lắm",
+        "Review chân thực cho cả nhà cùng tham khảo nè",
+        "Món này đang hot rần rần trên mạng luôn đó",
+        "Giao hàng nhanh mà đóng gói cũng kỹ càng nữa",
+        "Shop này uy tín cực kỳ, mình mua mấy lần rồi",
+        "Không nghĩ là nó lại đẹp đến mức này luôn",
+        "Một món đồ cực kỳ nên có trong nhà nhé",
+        "Tiện lợi dã man, dùng rồi mới thấy xứng đáng",
+        "Gom lúa hốt ngay em nó về thôi mọi người ơi",
+        "Nhỏ mà có võ, công dụng bất ngờ luôn",
+        "Cái màu này nhìn sang xịn mịn thực sự",
+        "Bác nào còn phân vân thì quất luôn đi, không hối hận đâu",
+        "Thiết kế thông minh, giải quyết được bao nhiêu vấn đề",
+        "Vừa rẻ vừa đẹp, tội gì mà không thử nhỉ",
+        "Đây chính là thứ mình tìm kiếm bấy lâu nay",
+        "Đỉnh của chóp luôn, 10 điểm không có nhưng",
+        "Đóng gói siêu chắc chắn, sờ vào là thấy xịn rồi",
+        "Món này làm quà tặng cũng hợp lý lắm luôn",
+        "Thêm ngay vào giỏ hàng kẻo hết là tiếc lắm",
+        "Dùng bền mà lại còn thời trang nữa chứ",
+        "Hội yêu bếp/yêu nhà không nên bỏ qua em này",
+        "Trải nghiệm thực tế thấy cực kỳ hài lòng",
+        "Lên video nhìn đẹp 1 thì ở ngoài đẹp 10 luôn",
+        "Đáng đồng tiền thực sự, mua đi không phí đâu",
+        "Cực kỳ hài lòng với chất lượng của shop này"
+    ]
+    
+    # Các từ đệm cuối câu để tạo sự khác biệt
+    endings = ["", "!", " nè.", " luôn á.", " luôn.", " ạ.", " nhé!", " nha.", " quá trời.", " ghê."]
+    
+    # Các emoji ngẫu nhiên
+    emojis = ["😍", "🥰", "✨", "🔥", "💯", "👏", "😎", "💎", "💸", "📦", "🌟", "🌈", "❤️", "👍", "🙌", "🤩"]
+    
+    base = random.choice(fillers)
+    end = random.choice(endings)
+    emo = "".join(random.choices(emojis, k=random.randint(1, 3)))
+    
+    return f"{base}{end} {emo}"
 
 def post_to_facebook_scheduled(video_path, title, page_token, session, scheduled_time):
     """Tải video lên Facebook ở chế độ Hẹn giờ (Scheduled)"""
     url = "https://graph-video.facebook.com/v21.0/me/videos"
-    # Caption ngắn gọn, kêu gọi xem bình luận (đã đa dạng hóa)
-    caption = f"{title}\n\n{get_random_cta()}"
+    
+    # Caption đa dạng hóa tối đa để lách Spam
+    random_emoji = "".join(random.choices(["❤️", "🔥", "✨", "😍", "🥰", "👍", "🙌"], k=random.randint(2, 4)))
+    filler = get_random_filler()
+    cta = get_random_cta()
+    
+    # Cấu trúc caption: Tiêu đề + Filler + Emoji + CTA
+    caption = f"{title}\n\n{filler} {random_emoji}\n\n{cta}"
     
     timestamp = int(scheduled_time.timestamp())
 
@@ -448,11 +530,12 @@ def main():
                 item = res.data[0]
                 vid_id = item['id_video']
                 tieu_de_sach = item.get('tieu_de', 'Video Review')
+                retry_count = item.get('so_lan_loi', 0)
                 
                 # Tính toán thời điểm đăng tiếp theo
                 sched_time = get_next_schedule_time(target_id, idx)
 
-                logger.info(f"🚀 Page [{ten_page}]: Đang xử lý 1 video gối đầu...")
+                logger.info(f"🚀 Page [{ten_page}]: Đang xử lý 1 video gối đầu (Lần thử: {retry_count + 1})...")
                 path = None
                 try:
                     path = download_video(vid_id)
@@ -464,19 +547,33 @@ def main():
                             logger.info(f"   ✅ Lên lịch thành công: {vid_id} -> {sched_time.strftime('%Y-%m-%d %H:%M')}")
                             time.sleep(random.uniform(30, 60))
                         else:
-                            logger.warning(f"   ⚠️ Lỗi upload bài {vid_id} cho {ten_page}. Sẽ thử lại sau.")
-                            safe_execute(supabase.table("lich_su_video").update({"trang_thai": "pending"}).eq("id", item['id']))
+                            raise Exception("Lỗi upload Facebook API")
                     else:
-                        logger.error(f"   ❌ Lỗi tải/xử lý video {vid_id}. Đánh dấu thất bại.")
-                        safe_execute(supabase.table("lich_su_video").update({"trang_thai": "failed"}).eq("id", item['id']))
+                        raise Exception("Lỗi download hoặc xử lý FFmpeg")
+
                 except Exception as e:
-                    logger.error(f"   ⚠️ Lỗi hệ thống: {e}")
-                    safe_execute(supabase.table("lich_su_video").update({"trang_thai": "failed"}).eq("id", item['id']))
+                    new_retry = retry_count + 1
+                    logger.error(f"   ⚠️ Lỗi xử lý {vid_id} ({new_retry}/3): {e}")
+                    
+                    if new_retry >= 3:
+                        logger.warning(f"   🚫 Video {vid_id} lỗi quá 3 lần. Tự động đưa vào Blacklist.")
+                        save_pending_video(vid_id, target_id, tieu_de_sach, "BLACKLIST")
+                        safe_execute(supabase.table("lich_su_video").update({
+                            "trang_thai": "blacklisted", 
+                            "so_lan_loi": new_retry
+                        }).eq("id", item['id']))
+                    else:
+                        # Vẫn để trạng thái failed hoặc chuyển về pending tùy chiến lược retry
+                        # Ở đây mình để lại pending để lần sau bot có thể thử lại
+                        safe_execute(supabase.table("lich_su_video").update({
+                            "trang_thai": "pending", 
+                            "so_lan_loi": new_retry
+                        }).eq("id", item['id']))
                 finally:
                     if path and os.path.exists(path): os.remove(path)
 
             if not processed_anything:
-                logger.info("🎯 Tất cả các page đã đủ lịch 20 ngày hoặc hết video trong kho.")
+                logger.info("🎯 Tất cả các page đã đủ lịch 30 ngày hoặc hết video trong kho.")
                 break
 
 
