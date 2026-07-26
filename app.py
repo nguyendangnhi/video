@@ -187,14 +187,14 @@ def process_video_spinning(input_path, page_name="Review Pro"):
                 )
 
         # 4. Thực thi FFmpeg với các flag tối ưu: FPS 30, xóa metadata, faststart
-        # Dùng -ss trước -i để cắt đồng bộ cả A/V và tăng tốc độ xử lý
         cmd = ['ffmpeg', '-y', '-ss', str(start_trim), '-i', input_path,
                '-filter_complex', filter_complex, '-map', '[v]']
         
         # Chỉ map audio và trộn thêm nhiễu trắng cực nhỏ (1%) để lách bản quyền âm thanh
         if has_audio:
             # atempo: đổi tốc độ, aeval+amix: chèn nhiễu trắng siêu nhỏ để đổi Fingerprint âm thanh
-            audio_filter = f"atempo={speed},asplit[a1][a2];[a2]aeval=val(0)|random(0):sample_rate=44100,volume=0.01[noise];[a1][noise]amix=inputs=2:duration=first"
+            # Đã sửa lỗi cú pháp aeval: bọc biểu thức trong dấu nháy đơn
+            audio_filter = f"atempo={speed},asplit[a1][a2];[a2]aeval='random(0)|random(0)':s=44100,volume=0.01[noise];[a1][noise]amix=inputs=2:duration=first"
             cmd.extend(['-map', '0:a', '-af', audio_filter, '-c:a', 'aac', '-b:a', '128k'])
         
         cmd.extend(['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
@@ -208,7 +208,6 @@ def process_video_spinning(input_path, page_name="Review Pro"):
             logger.error(f"❌ FFmpeg thất bại (Exit {res.returncode}):\n{res.stderr}")
             return False
 
-        if os.path.exists(text_file): os.remove(text_file)
         if os.path.exists(output_path):
             os.remove(input_path); os.rename(output_path, input_path)
             return True
@@ -216,7 +215,10 @@ def process_video_spinning(input_path, page_name="Review Pro"):
         logger.error(f"❌ FFmpeg quá thời gian xử lý (Timeout 2000s) cho video: {input_path}")
     except Exception as e:
         logger.error(f"⚠️ Lỗi xử lý video {input_path}: {e}")
-        if text_file and os.path.exists(text_file): os.remove(text_file)
+    finally:
+        if text_file and os.path.exists(text_file): 
+            try: os.remove(text_file)
+            except: pass
     return False
 
 # --- LOGIC CẤU HÌNH & DB ---
@@ -421,8 +423,8 @@ def get_next_schedule_time(page_id, page_index):
                 potential_time += timedelta(minutes=offset_minutes)
                 
                 if potential_time > start_search:
-                    # Đảm bảo không đặt lịch quá gần hiện tại (Meta yêu cầu ít nhất 15-20p)
-                    if potential_time < now + timedelta(minutes=15):
+                    # Đảm bảo không đặt lịch quá gần hiện tại (Meta yêu cầu ít nhất 20p)
+                    if potential_time < now + timedelta(minutes=20):
                         continue
                     return potential_time
             
