@@ -2,3 +2,6 @@ requests
 supabase
 python-dotenv
 yt-dlp
+DrissionPage
+pandas
+openpyxl
