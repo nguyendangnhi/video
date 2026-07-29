@@ -2,8 +2,8 @@ name: Auto Scraping and Posting to FB
 
 on:
   schedule:
-    # Chạy mỗi 8 tiếng (3 lần/ngày: 00:00, 08:00, 16:00 UTC)
-    - cron: '0 */8 * * *'
+    # Chạy mỗi 6 tiếng (4 lần/ngày: 00:00, 06:00, 12:00, 18:00 UTC)
+    - cron: '0 */6 * * *'
   workflow_dispatch: 
 
 concurrency:
@@ -13,7 +13,7 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 300 # Tăng giới hạn lên 5 tiếng để thoải mái xử lý 30 ngày video
+    timeout-minutes: 360 # Tăng lên mức tối đa 6 tiếng của GitHub
     
     steps:
       - name: Checkout code
