@@ -1,7 +1,7 @@
 requests
 supabase
 python-dotenv
-yt-dlp
-DrissionPage
+yt-dlp>=2025.01.15
+yt-dlp-get-pot
 pandas
 openpyxl
