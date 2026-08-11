@@ -2,8 +2,8 @@ name: Auto Scraping and Posting to FB
 
 on:
   schedule:
-    # Chạy mỗi 6 tiếng (4 lần/ngày: 00:00, 06:00, 12:00, 18:00 UTC)
-    - cron: '0 */6 * * *'
+    # Chạy mỗi 30 phút (48 lần/ngày) để xoay vòng các page an toàn
+    - cron: '*/30 * * * *'
   workflow_dispatch: 
 
 concurrency:
@@ -13,7 +13,7 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # Tăng lên mức tối đa 6 tiếng của GitHub
+    timeout-minutes: 60 # Tăng lên 60 phút để bot có đủ thời gian cào dữ liệu
     
     steps:
       - name: Checkout code
@@ -57,6 +57,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          WEBSHARE_API_KEY: ${{ secrets.WEBSHARE_API_KEY }}
         run: python app.py
 
       - name: Upload Bot Log
