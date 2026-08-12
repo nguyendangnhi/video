@@ -81,10 +81,7 @@ jobs:
             # Chạy bot (đã cấu hình SINGLE_RUN=true để chạy xong 1 page rồi thoát)
             python app.py
 
-            if [ $i -lt 12 ]; then
-              echo "Nghỉ 30 phút trước lượt tiếp theo..."
-              sleep 1800
-            fi
+            echo "Kết thúc lượt $i, chuẩn bị đổi IP cho lượt tiếp theo..."
           done
 
       - name: Upload Bot Log
