@@ -297,14 +297,21 @@ def main():
                 logger.error(f"❌ Lỗi trong lượt {i+1}: {e}")
                 logger.error(traceback.format_exc())
 
-        # Tính toán thời gian cần nghỉ để đúng 30p sau mới sang page tiếp theo
+        # Tính toán thời gian cần nghỉ để đúng chu kỳ 30p
         elapsed = time.time() - loop_start
         wait_time = 1800 - elapsed
-        if wait_time > 0 and i < 11:
-            logger.info(f"😴 Lượt xong sớm. Nghỉ {wait_time/60:.1f} phút để chuẩn bị cho page tiếp theo...")
+        
+        if wait_time > 0:
+            if single_run:
+                logger.info(f"😴 Đợi {wait_time/60:.1f} phút cho đủ chu kỳ 30p để đổi IP tiếp theo...")
+            else:
+                logger.info(f"😴 Lượt xong sớm. Nghỉ {wait_time/60:.1f} phút để chuẩn bị cho page tiếp theo...")
             time.sleep(wait_time)
-        elif i < 11:
+        elif not single_run:
             logger.warning(f"⚠️ Lượt {i+1} chạy quá 30p ({elapsed/60:.1f}p). Sang page tiếp theo ngay.")
+
+        if single_run:
+            break
 
     logger.info("✅ HOÀN THÀNH TOÀN BỘ CHU TRÌNH 6 TIẾNG.")
 
