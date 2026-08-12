@@ -185,30 +185,25 @@ def get_scheduled_info(page_id):
         logger.error(f"⚠️ Lỗi lấy thông tin Page {page_id}: {e}")
         return 0, 0, 0
 
-def main():
-    start_time = time.time()
-    # GitHub Action chạy mỗi 30p. Dừng cào ở phút thứ 27 để tránh chạy chồng chéo.
-    global_deadline = start_time + 1620
+def run_page_cycle(shared_session, ua):
+    """Xử lý 1 page: Đặt lịch 1 video + Cào video thô trong 30 phút"""
+    start_cycle = time.time()
+    # Deadline cho việc cào video của lượt này (phút thứ 27 của chu kỳ 30p)
+    cycle_deadline = start_cycle + 1620
     
-    logger.info("--- 🚀 BẮT ĐẦU CHU TRÌNH BOT (XOAY VÒNG ƯU TIÊN) ---")
-    cleanup_temp_files()
-    ua = get_config_from_db()
-    
-    # 1. Lấy thông tin toàn bộ Page
+    # 1. Lấy thông tin toàn bộ Page để tìm thằng ưu tiên nhất
     pages_res = safe_execute(supabase.table("cau_hinh_page").select("*"))
     pages_raw = pages_res.data if pages_res.data else []
     
     if not pages_raw:
         logger.warning("⚠️ Không tìm thấy cấu hình Page nào trong DB.")
-        return
+        return False
 
-    # 2. Phân tích tình trạng kho lịch và thời gian chạy cuối
     pages = []
     for p in pages_raw:
         tid = str(p['id_page_dich'])
         count, days, last_ts = get_scheduled_info(tid)
         
-        # Xử lý timestamp lần chạy cuối (đã thêm cột last_run_at vào DB)
         last_run_str = p.get('last_run_at') or '1970-01-01T00:00:00+00:00'
         try:
             last_run_dt = datetime.fromisoformat(last_run_str.replace('Z', '+00:00'))
@@ -224,88 +219,85 @@ def main():
         })
         pages.append(p)
     
-    # 3. Thuật toán sắp xếp ưu tiên thông minh (Xoay vòng + Ưu tiên page đói khi bắt đầu)
-    def calculate_priority(page):
-        # Tiêu chí 1: Thằng nào lâu chưa được chạy (last_run_ts nhỏ nhất)
-        # Tiêu chí 2: Nếu cùng thời gian (như lần đầu chạy), thằng nào ít lịch hơn (days_scheduled_count nhỏ nhất)
-        return (page['last_run_ts'], page['days_scheduled_count'])
-
-    pages.sort(key=calculate_priority)
+    # Thuật toán "Cuốn chiếu": 
+    # 1. Ưu tiên thằng nào có thời gian nghỉ lâu nhất (last_run_ts nhỏ nhất) để đảm bảo xoay vòng (Round Robin).
+    # 2. Nếu các thằng có cùng thời gian nghỉ (ví dụ mới chạy bot), ưu tiên thằng ít lịch nhất.
+    pages.sort(key=lambda x: (x['last_run_ts'], x['days_scheduled_count']))
     
-    # CHỈ CHỌN 1 PAGE ĐỂ XỬ LÝ TRONG LẦN NÀY
     config = pages[0]
     tid = str(config['id_page_dich'])
     ten_page = config.get('ten_page', 'Không tên')
 
-    # Tính toán thời gian đã nghỉ của page này (để log cho bạn yên tâm)
-    hours_since_last_run = (time.time() - config['last_run_ts']) / 3600
-    logger.info(f"🎯 Lượt này xử lý Page: {ten_page}")
-    logger.info(f"   ⏱️ Đã nghỉ: {hours_since_last_run:.2f} giờ. Lịch hiện tại: {config['days_scheduled_count']} ngày.")
+    logger.info(f"🎯 Lượt này xử lý Page: {ten_page} (Lịch hiện tại: {config['days_scheduled_count']} ngày)")
 
-    # 4. Cập nhật last_run_at ngay lập tức để đẩy xuống cuối hàng chờ cho lượt sau
-    try:
-        safe_execute(supabase.table("cau_hinh_page").update({
-            "last_run_at": datetime.now(timezone.utc).isoformat()
-        }).eq("id", config['id']))
-    except Exception as e:
-        logger.error(f"⚠️ Lỗi cập nhật last_run_at: {e}")
+    # Cập nhật last_run_at ngay để lượt sau (30p nữa) nó xuống cuối hàng chờ nếu các page khác có cùng số ngày
+    safe_execute(supabase.table("cau_hinh_page").update({
+        "last_run_at": datetime.now(timezone.utc).isoformat()
+    }).eq("id", config['id']))
 
-    with requests.Session() as shared_session:
-        # BƯỚC 1: ĐĂNG 1 VIDEO CHO PAGE ƯU TIÊN
-        logger.info(f"🎬 BƯỚC 1: Đăng bài cho Page '{ten_page}'...")
-        
-        if config['days_scheduled_count'] >= 30:
-            logger.info(f"✅ [Page: {ten_page}] Đã đủ lịch 30 ngày. Bỏ qua đăng bài.")
-        else:
-            res = safe_execute(supabase.rpc("lay_video_pending", {"p_id_page": tid}))
-            if res.data:
-                item = res.data[0]
-                logger.info(f"   📥 Xử lý video: {item['id_video']}")
-                path = download_video(item['id_video'])
-                if path:
-                    # Gửi idx=0 vì chỉ có 1 page, get_next_schedule_time sẽ tự tính offset
-                    st = get_next_schedule_time(tid, 0)
-                    logger.info(f"   🚀 Đẩy lên Meta (Lịch: {st})...")
-                    fbid = post_to_facebook_scheduled(path, item.get('link_affiliate', ''), config['token_fb'], shared_session, st)
-                    
-                    if fbid == "ERR_BLOCK_368":
-                        logger.critical(f"   🛑 CẢNH BÁO: Page bị chặn (368). Trả video về pending.")
-                        safe_execute(supabase.table("lich_su_video").update({"trang_thai": "pending"}).eq("id", item['id']))
-                    elif fbid: 
-                        update_scheduled_status(item['id_video'], tid, fbid, st.isoformat())
-                        logger.info(f"   ✅ Thành công video {item['id_video']}")
-                    else:
-                        logger.error(f"   ❌ Thất bại: Lỗi Meta API. Trả về pending.")
-                        safe_execute(supabase.table("lich_su_video").update({"trang_thai": "pending"}).eq("id", item['id']))
-                    
-                    if os.path.exists(path): os.remove(path)
-                else:
-                    logger.error(f"   ❌ Thất bại: Không tải được video. Trả về pending.")
+    # BƯỚC 1: ĐĂNG 1 VIDEO
+    if config['days_scheduled_count'] >= 30:
+        logger.info(f"✅ [Page: {ten_page}] Đã đủ lịch 30 ngày. Bỏ qua đăng bài.")
+    else:
+        res = safe_execute(supabase.rpc("lay_video_pending", {"p_id_page": tid}))
+        if res.data:
+            item = res.data[0]
+            path = download_video(item['id_video'])
+            if path:
+                st = get_next_schedule_time(tid, 0)
+                fbid = post_to_facebook_scheduled(path, item.get('link_affiliate', ''), config['token_fb'], shared_session, st)
+                
+                if fbid == "ERR_BLOCK_368":
                     safe_execute(supabase.table("lich_su_video").update({"trang_thai": "pending"}).eq("id", item['id']))
-            else:
-                logger.info(f"   ℹ️ [Page: {ten_page}] Không có video 'pending'.")
-
-        # BƯỚC 2: CÀO DỮ LIỆU BỔ SUNG CHO PAGE NÀY
-        logger.info(f"📡 BƯỚC 2: Kiểm tra kho và cào bổ sung cho Page '{ten_page}'...")
-        r_raw = safe_execute(supabase.table("lich_su_video").select("id", count="exact").eq("id_page", tid).eq("trang_thai", "raw"))
-        raw_c = r_raw.count if r_raw.count is not None else 0
-        r_pending = safe_execute(supabase.table("lich_su_video").select("id", count="exact").eq("id_page", tid).eq("trang_thai", "pending"))
-        pending_c = r_pending.count if r_pending.count is not None else 0
-        
-        total_stock = config['scheduled_actual_count'] + raw_c + pending_c
-        if total_stock < 300:
-            needed = min(50, 300 - total_stock)
-            logger.info(f"📡 Page {tid} thiếu hàng ({total_stock}/300). Cào thêm {needed} video...")
-            crawl_youtube_for_page(config, ua, shared_session, check_video_exists, save_pending_video, clean_title, target_goal=needed, stop_time=global_deadline)
+                elif fbid: 
+                    update_scheduled_status(item['id_video'], tid, fbid, st.isoformat())
+                    logger.info(f"   ✅ Thành công đặt lịch 1 video cho {ten_page}")
+                else:
+                    safe_execute(supabase.table("lich_su_video").update({"trang_thai": "pending"}).eq("id", item['id']))
+                
+                if os.path.exists(path): os.remove(path)
         else:
-            logger.info(f"📦 Kho hàng đã đủ ({total_stock}/300).")
+            logger.info(f"   ℹ️ [Page: {ten_page}] Không có video 'pending' để đặt lịch.")
 
-    # Kiểm tra nhắc nhở về video 'raw'
-    res_raw = safe_execute(supabase.table("lich_su_video").select("id", count="exact").eq("trang_thai", "raw"))
-    if res_raw.count and res_raw.count > 0:
-        logger.warning(f"⚠️ Nhắc nhở: Đang có {res_raw.count} video 'raw' cần chuyển link Shopee.")
+    # BƯỚC 2: CÀO VIDEO THÔ (Dành phần thời gian còn lại của 30p)
+    r_raw = safe_execute(supabase.table("lich_su_video").select("id", count="exact").eq("id_page", tid).eq("trang_thai", "raw"))
+    raw_c = r_raw.count if r_raw.count is not None else 0
+    total_stock = config['scheduled_actual_count'] + raw_c
+    
+    if total_stock < 300:
+        needed = min(50, 300 - total_stock)
+        logger.info(f"📡 Page {ten_page} đang cào video thô bổ sung (Deadline lượt: 27 phút)...")
+        crawl_youtube_for_page(config, ua, shared_session, check_video_exists, save_pending_video, clean_title, target_goal=needed, stop_time=cycle_deadline)
+    
+    return True
 
-    logger.info(f"✅ HOÀN THÀNH CHU TRÌNH CHO PAGE: {ten_page}")
+def main():
+    logger.info("--- 🚀 BẮT ĐẦU CHU TRÌNH BOT 6 TIẾNG (XỬ LÝ CUỐN CHIẾU MỖI 30P) ---")
+    cleanup_temp_files()
+    ua = get_config_from_db()
+    
+    # Chạy tối đa 12 chu kỳ (12 * 30p = 6 tiếng)
+    for i in range(12):
+        loop_start = time.time()
+        logger.info(f"\n⏰ === BẮT ĐẦU LƯỢT THỨ {i+1}/12 === ⏰")
+        
+        with requests.Session() as shared_session:
+            try:
+                run_page_cycle(shared_session, ua)
+            except Exception as e:
+                logger.error(f"❌ Lỗi trong lượt {i+1}: {e}")
+                logger.error(traceback.format_exc())
+
+        # Tính toán thời gian cần nghỉ để đúng 30p sau mới sang page tiếp theo
+        elapsed = time.time() - loop_start
+        wait_time = 1800 - elapsed
+        if wait_time > 0 and i < 11:
+            logger.info(f"😴 Lượt xong sớm. Nghỉ {wait_time/60:.1f} phút để chuẩn bị cho page tiếp theo...")
+            time.sleep(wait_time)
+        elif i < 11:
+            logger.warning(f"⚠️ Lượt {i+1} chạy quá 30p ({elapsed/60:.1f}p). Sang page tiếp theo ngay.")
+
+    logger.info("✅ HOÀN THÀNH TOÀN BỘ CHU TRÌNH 6 TIẾNG.")
 
 if __name__ == "__main__":
     # Đảm bảo console hiển thị được tiếng Việt trên Windows
