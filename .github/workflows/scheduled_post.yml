@@ -53,12 +53,39 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Bot (Posting & Crawl if empty)
+      - name: Run Bot (Loop every 30m with IP Rotation)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           WEBSHARE_API_KEY: ${{ secrets.WEBSHARE_API_KEY }}
-        run: python app.py
+          SINGLE_RUN: "true"
+        run: |
+          # Chạy tối đa 12 lượt, mỗi lượt 30 phút = 6 tiếng
+          for i in {1..12}
+          do
+            echo "================================================"
+            echo "LƯỢT CHẠY THỨ $i/12 - Đổi IP Cloudflare WARP"
+            echo "================================================"
+            
+            # Đổi IP bằng cách reconnect WARP
+            sudo warp-cli disconnect || true
+            sleep 2
+            sudo warp-cli connect || true
+            
+            # Đợi 1 chút cho WARP ổn định
+            sleep 10
+            echo -n "IP Hiện tại: "
+            curl -s ifconfig.me || echo "Không lấy được IP"
+            echo ""
+
+            # Chạy bot (đã cấu hình SINGLE_RUN=true để chạy xong 1 page rồi thoát)
+            python app.py
+
+            if [ $i -lt 12 ]; then
+              echo "Nghỉ 30 phút trước lượt tiếp theo..."
+              sleep 1800
+            fi
+          done
 
       - name: Upload Bot Log
         if: always()
