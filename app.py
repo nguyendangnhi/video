@@ -272,14 +272,23 @@ def run_page_cycle(shared_session, ua):
     return True
 
 def main():
-    logger.info("--- 🚀 BẮT ĐẦU CHU TRÌNH BOT 6 TIẾNG (XỬ LÝ CUỐN CHIẾU MỖI 30P) ---")
+    logger.info("--- 🚀 BẮT ĐẦU CHU TRÌNH BOT (XỬ LÝ CUỐN CHIẾU) ---")
     cleanup_temp_files()
     ua = get_config_from_db()
     
-    # Chạy tối đa 12 chu kỳ (12 * 30p = 6 tiếng)
-    for i in range(12):
+    # Lấy cấu hình chạy 1 lần hay 12 lần từ môi trường (mặc định 12 để chạy local cũ)
+    single_run = os.getenv("SINGLE_RUN", "False").lower() == "true"
+    iterations = 1 if single_run else 12
+    
+    if single_run:
+        logger.info("Mode: SINGLE_RUN (Chạy 1 lượt rồi thoát)")
+    else:
+        logger.info("Mode: MULTI_RUN (Chạy 12 lượt x 30p)")
+
+    for i in range(iterations):
         loop_start = time.time()
-        logger.info(f"\n⏰ === BẮT ĐẦU LƯỢT THỨ {i+1}/12 === ⏰")
+        if not single_run:
+            logger.info(f"\n⏰ === BẮT ĐẦU LƯỢT THỨ {i+1}/12 === ⏰")
         
         with requests.Session() as shared_session:
             try:
